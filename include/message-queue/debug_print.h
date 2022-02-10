@@ -22,7 +22,7 @@ using PEID = int;
 
 
 #ifndef DEBUG_BARRIER
-#ifndef NDEBUG
+// #ifndef NDEBUG
 #define DEBUG_BARRIER(rank)                                                                    \
     {                                                                                          \
         if (std::getenv("DEBUG_BARRIER") != nullptr) {                                         \
@@ -48,9 +48,9 @@ using PEID = int;
             }                                                                                  \
         }                                                                                      \
     };
-#else
-#define DEBUG_BARRIER(rank)
-#endif
+// #else
+// #define DEBUG_BARRIER(rank)
+// #endif
 #endif
 
 struct MPIException : public std::exception {

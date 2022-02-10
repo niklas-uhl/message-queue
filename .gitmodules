@@ -1,0 +1,3 @@
+[submodule "extern/graph-io"]
+	path = extern/graph-io
+	url = https://github.com/niklas-uhl/graph-io

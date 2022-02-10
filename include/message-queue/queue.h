@@ -1,11 +1,14 @@
 #pragma once
 
 #include <mpi.h>
+#include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include "debug_print.h"
 #include "message-queue/debug_print.h"
 #include "message-queue/mpi_datatype.h"
 
@@ -20,6 +23,7 @@ class MessageQueue {
         size_t message_size;
         std::vector<S> message;
         MPI_Request request;
+        size_t request_id;
         int tag = MPI_ANY_TAG;
         State state = State::posted;
 
@@ -34,7 +38,8 @@ class MessageQueue {
             MPI_Status status;
             assert(state == State::initiated);
             assert(this->request != MPI_REQUEST_NULL);
-            MPI_Test(&request, &finished, &status);
+            int err = MPI_Test(&request, &finished, &status);
+            check_mpi_error(err, __FILE__, __LINE__);
             if (finished) {
                 state = State::completed;
                 return true;
@@ -44,15 +49,22 @@ class MessageQueue {
     };
 
     template <class S>
+    using MessageHandlePtr = std::unique_ptr<MessageHandle<S>>;
+
+    template <class S>
     struct SendHandle : MessageHandle<S> {
         PEID receiver = MPI_ANY_SOURCE;
 
         void initiate_send() {
-            MPI_Issend(this->message.data(), this->message.size(), kamping::mpi_type_traits<S>::data_type(), receiver,
-                       this->tag, MPI_COMM_WORLD, &(this->request));
+            int err = MPI_Isend(this->message.data(), this->message.size(), kamping::mpi_type_traits<S>::data_type(),
+                                receiver, this->tag, MPI_COMM_WORLD, &this->request);
+            check_mpi_error(err, __FILE__, __LINE__);
             this->state = State::initiated;
         }
     };
+
+    template <class S>
+    using SendHandlePtr = std::unique_ptr<SendHandle<S>>;
 
     template <class S>
     struct ReceiveHandle : MessageHandle<S> {
@@ -71,6 +83,9 @@ class MessageQueue {
         }
     };
 
+    template <class S>
+    using ReceiveHandlePtr = std::unique_ptr<ReceiveHandle<S>>;
+
     struct ProbeResult {
         MPI_Status status;
         MPI_Message matched_message;
@@ -78,14 +93,14 @@ class MessageQueue {
         int tag;
 
         template <typename S>
-        ReceiveHandle<S> handle() {
-            ReceiveHandle<S> handle;
+        ReceiveHandlePtr<S> handle() {
+            auto handle = std::make_unique<ReceiveHandle<S>>();
             int message_size;
             MPI_Get_count(&status, kamping::mpi_type_traits<S>::data_type(), &message_size);
-            handle.message_size = message_size;
-            handle.matched_message = matched_message;
-            handle.tag = status.MPI_TAG;
-            handle.sender = status.MPI_SOURCE;
+            handle->message_size = message_size;
+            handle->matched_message = matched_message;
+            handle->tag = status.MPI_TAG;
+            handle->sender = status.MPI_SOURCE;
             return handle;
         }
     };
@@ -103,27 +118,28 @@ class MessageQueue {
     }
 
     template <typename S>
-    static void post_message_impl(std::vector<SendHandle<S>>& handles,
-                                  std::vector<S>&& message,
-                                  PEID receiver,
-                                  int tag) {
-        handles.emplace_back(SendHandle<S>{});
-        SendHandle<S>& handle = handles.back();
-        handle.message = std::forward<std::vector<S>>(message);
-        handle.receiver = receiver;
-        handle.tag = tag;
-        handle.initiate_send();
+    void post_message_impl(std::vector<SendHandlePtr<S>>& handles, std::vector<S>&& message, PEID receiver, int tag) {
+        handles.emplace_back(new SendHandle<S>{});
+        SendHandlePtr<S>& handle = handles.back();
+        handle->message = std::forward<std::vector<S>>(message);
+        handle->receiver = receiver;
+        handle->tag = tag;
+        handle->request_id = this->request_id_;
+        this->request_id_++;
+        handle->initiate_send();
     }
 
 public:
-    MessageQueue() : send_handles_(), recv_handles_(), send_count_(0), recv_count_(0), size_(0), rank_(0) {
+    MessageQueue()
+        : send_handles_(), recv_handles_(), send_count_(0), recv_count_(0), size_(0), rank_(0), request_id_(0) {
         MPI_Comm_rank(MPI_COMM_WORLD, &rank_);
         MPI_Comm_size(MPI_COMM_WORLD, &size_);
     }
 
     void post_message(std::vector<T>&& message, PEID receiver, int tag = 0) {
         assert(tag != control_wave_tag);
-        post_message_impl(send_handles_, std::forward<std::vector<T>>(message), receiver, tag);
+        // std::cout << message.size() <<"\n";
+        post_message_impl(send_handles_, std::move(message), receiver, tag);
         send_count_++;
     }
 
@@ -134,9 +150,11 @@ public:
             size_t i = 0;
             while (i < handles.size()) {
                 auto& handle = handles[i];
-                if (handle.test()) {
-                    on_request_finish(handle);
-                    handles[i] = std::move(handles[handles.size() - 1]);
+                if (handle->test()) {
+                    on_request_finish(*handle);
+                    if (i < handles.size() - 1) {
+                        handles[i] = std::move(handles.back());
+                    }
                     handles.resize(handles.size() - 1);
                 } else {
                     i++;
@@ -152,12 +170,16 @@ public:
             }
             if (result.value().tag == control_wave_tag) {
                 auto handle = result.value().template handle<size_t>();
+                handle->request_id = this->request_id_;
+                this->request_id_++;
                 control_recv_handles_.emplace_back(std::move(handle));
-                control_recv_handles_.back().start_receive();
+                control_recv_handles_.back()->start_receive();
             } else {
                 auto handle = result.value().template handle<T>();
+                handle->request_id = this->request_id_;
+                this->request_id_++;
                 recv_handles_.emplace_back(std::move(handle));
-                recv_handles_.back().start_receive();
+                recv_handles_.back()->start_receive();
             }
         }
         size_t i = 0;
@@ -215,35 +237,52 @@ public:
 
     template <typename MessageHandler>
     void terminate(MessageHandler&& on_message) {
-        while (!send_handles_.empty() && !recv_handles_.empty()) {
-            poll(on_message);
-        }
-        if (rank_ == 0) {
-            while (advance_control_wave()) {
+        std::pair<size_t, size_t> global_count = {0, 0};
+        int wave_count = 0;
+        while (true) {
+            while (!send_handles_.empty() && !recv_handles_.empty()) {
                 poll(on_message);
             }
-            atomic_debug(std::to_string(number_of_waves) + " control waves required.");
-        }
-        MPI_Request barrier_request;
-        MPI_Ibarrier(MPI_COMM_WORLD, &barrier_request);
-        int barrier_hit = false;
-        while (!barrier_hit) {
-            poll(on_message);
-            MPI_Test(&barrier_request, &barrier_hit, MPI_STATUS_IGNORE);
+            std::pair<size_t, size_t> local_count = {send_count_, recv_count_};
+            std::pair<size_t, size_t> reduced_count;
+            MPI_Request reduce_request;
+            MPI_Iallreduce(&local_count, &reduced_count, 2, kamping::mpi_type_traits<size_t>::data_type(), MPI_SUM,
+                           MPI_COMM_WORLD, &reduce_request);
+            wave_count++;
+            int reduce_finished = false;
+            while (!reduce_finished) {
+                poll(on_message);
+                if (reduce_request == MPI_REQUEST_NULL) {
+                    throw "Error";
+                }
+                int err = MPI_Test(&reduce_request, &reduce_finished, MPI_STATUS_IGNORE);
+                if (err != MPI_SUCCESS) {
+                    throw "Error";
+                }
+            }
+            if (rank_ == 0) {
+                // atomic_debug("Wave count " + std::to_string(wave_count));
+            }
+            if (reduced_count == global_count && global_count.first == global_count.second) {
+                break;
+            } else {
+                global_count = reduced_count;
+            }
         }
     }
 
 private:
     enum class TerminationState { active, first_wave, first_wave_success, second_wave, terminated };
-    std::vector<SendHandle<T>> send_handles_;
-    std::vector<ReceiveHandle<T>> recv_handles_;
-    std::vector<SendHandle<size_t>> control_send_handles_;
-    std::vector<ReceiveHandle<size_t>> control_recv_handles_;
+    std::vector<SendHandlePtr<T>> send_handles_;
+    std::vector<ReceiveHandlePtr<T>> recv_handles_;
+    std::vector<SendHandlePtr<size_t>> control_send_handles_;
+    std::vector<ReceiveHandlePtr<size_t>> control_recv_handles_;
     size_t send_count_ = 0;
     size_t recv_count_ = 0;
     int static const control_wave_tag = 478;
+    size_t request_id_;
     PEID rank_;
     PEID size_;
     TerminationState termination_state = TerminationState::active;
-    size_t number_of_waves=0;
+    size_t number_of_waves = 0;
 };
