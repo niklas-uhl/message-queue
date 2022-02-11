@@ -1,6 +1,7 @@
 #pragma once
 
 #include <mpi.h>
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -131,7 +132,7 @@ class MessageQueue {
 
 public:
     MessageQueue()
-        : send_handles_(), recv_handles_(), send_count_(0), recv_count_(0), size_(0), rank_(0), request_id_(0) {
+        : send_handles_(), recv_handles_(), send_count_(0), recv_count_(0), request_id_(0), rank_(0), size_(0) {
         MPI_Comm_rank(MPI_COMM_WORLD, &rank_);
         MPI_Comm_size(MPI_COMM_WORLD, &size_);
     }
@@ -182,14 +183,14 @@ public:
                 recv_handles_.back()->start_receive();
             }
         }
-        size_t i = 0;
+        //size_t i = 0;
         check_and_remove(recv_handles_, [&](ReceiveHandle<T>& handle) {
             recv_count_++;
             on_message(handle.sender, std::move(handle.message));
         });
         check_and_remove(control_recv_handles_, [&](ReceiveHandle<size_t>& handle) {
             if (handle.tag == control_wave_tag) {
-                if (handle.message[2] == rank_) {
+                if (handle.message[2] == static_cast<size_t>(rank_)) {
                     if (handle.message[0] == handle.message[1]) {
                         if (termination_state == TerminationState::first_wave) {
                             termination_state = TerminationState::first_wave_success;
