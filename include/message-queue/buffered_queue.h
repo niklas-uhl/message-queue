@@ -94,6 +94,13 @@ public:
         return queue_.stats();
     }
 
+    void reset() {
+        queue_.reset();
+        buffers_.clear();
+        buffer_ocupacy_ = 0;
+        overflows_ = 0;
+    }
+
 private:
     MessageQueue<T> queue_;
     std::unordered_map<PEID, std::vector<T>> buffers_;

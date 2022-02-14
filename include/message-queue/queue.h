@@ -253,6 +253,17 @@ public:
         return stats_;
     }
 
+    void reset() {
+        send_handles_.clear();
+        recv_handles_.clear();
+        control_send_handles_.clear();
+        control_recv_handles_.clear();
+        stats_ = MessageStatistics();
+        request_id_ = 0;
+        termination_state = TerminationState::active;
+        number_of_waves = 0;
+    }
+
 private:
     template <typename MessageHandler, typename PreWaveHook>
     void terminate_impl(MessageHandler&& on_message, PreWaveHook&& pre_wave) {
