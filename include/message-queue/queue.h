@@ -11,10 +11,14 @@
 #include <vector>
 #include "debug_print.h"
 #include "message-queue/debug_print.h"
+#include "message-queue/message_statistics.h"
 #include "message-queue/mpi_datatype.h"
 
+namespace message_queue {
 template <typename T>
 class MessageQueue {
+    template <class U, class Merger, class Splitter>
+    friend class BufferedMessageQueue;
     static_assert(kamping::mpi_type_traits<T>::is_builtin, "Only builtin MPI types are supported");
 
     enum class State { posted, initiated, completed };
@@ -131,17 +135,21 @@ class MessageQueue {
     }
 
 public:
-    MessageQueue()
-        : send_handles_(), recv_handles_(), send_count_(0), recv_count_(0), request_id_(0), rank_(0), size_(0) {
+    MessageQueue() : send_handles_(), recv_handles_(), stats_(), request_id_(0), rank_(0), size_(0) {
         MPI_Comm_rank(MPI_COMM_WORLD, &rank_);
         MPI_Comm_size(MPI_COMM_WORLD, &size_);
     }
 
     void post_message(std::vector<T>&& message, PEID receiver, int tag = 0) {
+        if (message.empty()) {
+            return;
+        }
         assert(tag != control_wave_tag);
         // std::cout << message.size() <<"\n";
+        size_t message_size = message.size();
         post_message_impl(send_handles_, std::move(message), receiver, tag);
-        send_count_++;
+        stats_.sent_messages++;
+        stats_.send_volume += message_size;
     }
 
     template <typename MessageHandler>
@@ -183,9 +191,10 @@ public:
                 recv_handles_.back()->start_receive();
             }
         }
-        //size_t i = 0;
+        // size_t i = 0;
         check_and_remove(recv_handles_, [&](ReceiveHandle<T>& handle) {
-            recv_count_++;
+            stats_.received_messages++;
+            stats_.receive_volume += handle.message.size();
             on_message(handle.sender, std::move(handle.message));
         });
         check_and_remove(control_recv_handles_, [&](ReceiveHandle<size_t>& handle) {
@@ -203,10 +212,10 @@ public:
                         termination_state = TerminationState::active;
                     }
                 } else {
-                    this->post_message_impl(
-                        control_send_handles_,
-                        {handle.message[0] + send_count_, handle.message[1] + recv_count_, handle.message[2]},
-                        (rank_ + 1) % size_, control_wave_tag);
+                    this->post_message_impl(control_send_handles_,
+                                            {handle.message[0] + stats_.sent_messages,
+                                             handle.message[1] + stats_.received_messages, handle.message[2]},
+                                            (rank_ + 1) % size_, control_wave_tag);
                 }
             }
         });
@@ -215,9 +224,9 @@ public:
     bool advance_control_wave() {
         auto start_wave = [&]() {
             number_of_waves++;
-            this->post_message_impl<size_t>(control_send_handles_,
-                                            {send_count_, recv_count_, static_cast<size_t>(rank_)}, (rank_ + 1) % size_,
-                                            control_wave_tag);
+            this->post_message_impl<size_t>(
+                control_send_handles_, {stats_.sent_messages, stats_.received_messages, static_cast<size_t>(rank_)},
+                (rank_ + 1) % size_, control_wave_tag);
         };
         if (termination_state == TerminationState::active) {
             // atomic_debug("Starting new wave");
@@ -235,16 +244,26 @@ public:
         }
         return true;
     }
-
     template <typename MessageHandler>
     void terminate(MessageHandler&& on_message) {
+        terminate_impl(on_message, []() {});
+    }
+
+    const MessageStatistics& stats() {
+        return stats_;
+    }
+
+private:
+    template <typename MessageHandler, typename PreWaveHook>
+    void terminate_impl(MessageHandler&& on_message, PreWaveHook&& pre_wave) {
         std::pair<size_t, size_t> global_count = {0, 0};
         int wave_count = 0;
         while (true) {
+            pre_wave();
             while (!send_handles_.empty() && !recv_handles_.empty()) {
                 poll(on_message);
             }
-            std::pair<size_t, size_t> local_count = {send_count_, recv_count_};
+            std::pair<size_t, size_t> local_count = {stats_.sent_messages, stats_.received_messages};
             std::pair<size_t, size_t> reduced_count;
             MPI_Request reduce_request;
             MPI_Iallreduce(&local_count, &reduced_count, 2, kamping::mpi_type_traits<size_t>::data_type(), MPI_SUM,
@@ -278,8 +297,7 @@ private:
     std::vector<ReceiveHandlePtr<T>> recv_handles_;
     std::vector<SendHandlePtr<size_t>> control_send_handles_;
     std::vector<ReceiveHandlePtr<size_t>> control_recv_handles_;
-    size_t send_count_ = 0;
-    size_t recv_count_ = 0;
+    MessageStatistics stats_;
     int static const control_wave_tag = 478;
     size_t request_id_;
     PEID rank_;
@@ -287,3 +305,5 @@ private:
     TerminationState termination_state = TerminationState::active;
     size_t number_of_waves = 0;
 };
+
+}  // namespace message_queue
