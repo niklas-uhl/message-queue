@@ -1,3 +1,6 @@
 [submodule "extern/graph-io"]
 	path = extern/graph-io
 	url = https://github.com/niklas-uhl/graph-io
+[submodule "extern/backward-cpp"]
+	path = extern/backward-cpp
+	url = https://github.com/bombela/backward-cpp

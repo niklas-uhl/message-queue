@@ -69,21 +69,37 @@ public:
     }
 
     template <typename MessageHandler>
-    void poll(MessageHandler&& on_message) {
+    bool poll(MessageHandler&& on_message) {
         static_assert(std::is_invocable_v<MessageHandler, typename std::vector<T>::iterator,
                                           typename std::vector<T>::iterator, PEID>);
-        queue_.poll([&](PEID sender, std::vector<T> message) { split(message, on_message, sender); });
+        return queue_.poll([&](std::vector<T> message, PEID sender) { split(message, on_message, sender); });
     }
 
     template <typename MessageHandler>
     void terminate(MessageHandler&& on_message) {
         static_assert(std::is_invocable_v<MessageHandler, typename std::vector<T>::iterator,
                                           typename std::vector<T>::iterator, PEID>);
-        queue_.terminate_impl([&](PEID sender, std::vector<T> message) { split(message, on_message, sender); },
+        queue_.terminate_impl([&](std::vector<T> message, PEID sender) { split(message, on_message, sender); },
                               [&]() { flush_all(); });
         /* for (auto buffer : buffers_) { */
         /*     atomic_debug(buffer); */
         /* } */
+    }
+
+    template <typename MessageHandler>
+    bool try_terminate(MessageHandler&& on_message) {
+        static_assert(std::is_invocable_v<MessageHandler, typename std::vector<T>::iterator,
+                                          typename std::vector<T>::iterator, PEID>);
+        atomic_debug("Try terminate");
+        return queue_.try_terminate_impl([&](PEID sender, std::vector<T> message) { split(message, on_message, sender); },
+                              [&]() { flush_all(); });
+        /* for (auto buffer : buffers_) { */
+        /*     atomic_debug(buffer); */
+        /* } */
+    }
+
+    void reactivate() {
+        queue_.reactivate();
     }
 
     size_t overflows() const {

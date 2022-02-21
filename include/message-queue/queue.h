@@ -2,6 +2,7 @@
 
 #include <mpi.h>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -61,6 +62,11 @@ class MessageQueue {
         PEID receiver = MPI_ANY_SOURCE;
 
         void initiate_send() {
+            if (&this->request == NULL) {
+                std::abort();
+            }
+
+            // atomic_debug(this->request_id);
             int err = MPI_Isend(this->message.data(), this->message.size(), kamping::mpi_type_traits<S>::data_type(),
                                 receiver, this->tag, MPI_COMM_WORLD, &this->request);
             check_mpi_error(err, __FILE__, __LINE__);
@@ -126,12 +132,18 @@ class MessageQueue {
     void post_message_impl(std::vector<SendHandlePtr<S>>& handles, std::vector<S>&& message, PEID receiver, int tag) {
         handles.emplace_back(new SendHandle<S>{});
         SendHandlePtr<S>& handle = handles.back();
-        handle->message = std::forward<std::vector<S>>(message);
+        if (message.empty()) {
+            std::abort();
+        }
+        handle->message = std::move(message);
         handle->receiver = receiver;
         handle->tag = tag;
         handle->request_id = this->request_id_;
         this->request_id_++;
-        handle->initiate_send();
+        if (messages_in_transit_ < max_messages_in_transit_) {
+            handle->initiate_send();
+            messages_in_transit_++;
+        }
     }
 
 public:
@@ -141,6 +153,7 @@ public:
     }
 
     void post_message(std::vector<T>&& message, PEID receiver, int tag = 0) {
+        assert(receiver != rank_);
         if (message.empty()) {
             return;
         }
@@ -153,8 +166,9 @@ public:
     }
 
     template <typename MessageHandler>
-    void poll(MessageHandler&& on_message) {
-        static_assert(std::is_invocable_v<MessageHandler, PEID, std::vector<T>>);
+    bool poll(MessageHandler&& on_message) {
+        // atomic_debug("Inner poll");
+        static_assert(std::is_invocable_v<MessageHandler, std::vector<T>, PEID>);
         auto check_and_remove = [&](auto& handles, auto on_request_finish) {
             size_t i = 0;
             while (i < handles.size()) {
@@ -170,80 +184,48 @@ public:
                 }
             }
         };
-        check_and_remove(send_handles_, [](auto) {});
-        check_and_remove(control_send_handles_, [](auto) {});
+        bool something_happenend = false;
+        size_t i = 0;
+        while (i < send_handles_.size()) {
+            auto& handle = send_handles_[i];
+            if (handle->state == State::posted) {
+                if (messages_in_transit_ < max_messages_in_transit_) {
+                    handle->initiate_send();
+                    messages_in_transit_++;
+                }
+            }
+            if (handle->test()) {
+                messages_in_transit_--;
+                if (i < send_handles_.size() - 1) {
+                    send_handles_[i] = std::move(send_handles_.back());
+                }
+                send_handles_.resize(send_handles_.size() - 1);
+            } else {
+                i++;
+            }
+        }
         while (true) {
             std::optional result = probe();
             if (!result.has_value()) {
                 break;
             }
-            if (result.value().tag == control_wave_tag) {
-                auto handle = result.value().template handle<size_t>();
-                handle->request_id = this->request_id_;
-                this->request_id_++;
-                control_recv_handles_.emplace_back(std::move(handle));
-                control_recv_handles_.back()->start_receive();
-            } else {
-                auto handle = result.value().template handle<T>();
-                handle->request_id = this->request_id_;
-                this->request_id_++;
-                recv_handles_.emplace_back(std::move(handle));
-                recv_handles_.back()->start_receive();
-            }
+            something_happenend = true;
+            auto handle = result.value().template handle<T>();
+            handle->request_id = this->request_id_;
+            this->request_id_++;
+            recv_handles_.emplace_back(std::move(handle));
+            recv_handles_.back()->start_receive();
         }
         // size_t i = 0;
         check_and_remove(recv_handles_, [&](ReceiveHandle<T>& handle) {
             stats_.received_messages++;
             stats_.receive_volume += handle.message.size();
-            on_message(handle.sender, std::move(handle.message));
+            something_happenend = true;
+            on_message(std::move(handle.message), handle.sender);
         });
-        check_and_remove(control_recv_handles_, [&](ReceiveHandle<size_t>& handle) {
-            if (handle.tag == control_wave_tag) {
-                if (handle.message[2] == static_cast<size_t>(rank_)) {
-                    if (handle.message[0] == handle.message[1]) {
-                        if (termination_state == TerminationState::first_wave) {
-                            termination_state = TerminationState::first_wave_success;
-                        } else if (termination_state == TerminationState::second_wave) {
-                            termination_state = TerminationState::terminated;
-                        } else {
-                            assert(false);
-                        }
-                    } else {
-                        termination_state = TerminationState::active;
-                    }
-                } else {
-                    this->post_message_impl(control_send_handles_,
-                                            {handle.message[0] + stats_.sent_messages,
-                                             handle.message[1] + stats_.received_messages, handle.message[2]},
-                                            (rank_ + 1) % size_, control_wave_tag);
-                }
-            }
-        });
+        return something_happenend;
     }
 
-    bool advance_control_wave() {
-        auto start_wave = [&]() {
-            number_of_waves++;
-            this->post_message_impl<size_t>(
-                control_send_handles_, {stats_.sent_messages, stats_.received_messages, static_cast<size_t>(rank_)},
-                (rank_ + 1) % size_, control_wave_tag);
-        };
-        if (termination_state == TerminationState::active) {
-            // atomic_debug("Starting new wave");
-            start_wave();
-            termination_state = TerminationState::first_wave;
-        }
-        if (termination_state == TerminationState::first_wave_success) {
-            // atomic_debug("Starting second wave");
-            start_wave();
-            termination_state = TerminationState::second_wave;
-        }
-        if (termination_state == TerminationState::terminated) {
-            atomic_debug("Terminated");
-            return false;
-        }
-        return true;
-    }
     template <typename MessageHandler>
     void terminate(MessageHandler&& on_message) {
         terminate_impl(on_message, []() {});
@@ -256,17 +238,20 @@ public:
     void reset() {
         send_handles_.clear();
         recv_handles_.clear();
-        control_send_handles_.clear();
-        control_recv_handles_.clear();
         stats_ = MessageStatistics();
         request_id_ = 0;
         termination_state = TerminationState::active;
         number_of_waves = 0;
     }
 
+    void reactivate() {
+        termination_state = TerminationState::active;
+    }
+
 private:
     template <typename MessageHandler, typename PreWaveHook>
     void terminate_impl(MessageHandler&& on_message, PreWaveHook&& pre_wave) {
+        atomic_debug("Inner terminate");
         std::pair<size_t, size_t> global_count = {0, 0};
         int wave_count = 0;
         while (true) {
@@ -274,6 +259,7 @@ private:
             while (!send_handles_.empty() && !recv_handles_.empty()) {
                 poll(on_message);
             }
+            atomic_debug("Handles empty");
             std::pair<size_t, size_t> local_count = {stats_.sent_messages, stats_.received_messages};
             std::pair<size_t, size_t> reduced_count;
             MPI_Request reduce_request;
@@ -302,12 +288,62 @@ private:
         }
     }
 
+    template <typename MessageHandler, typename PreWaveHook>
+    bool try_terminate_impl(MessageHandler&& on_message, PreWaveHook&& pre_wave) {
+        termination_state = TerminationState::trying_termination;
+        int wave_count = 0;
+        while (true) {
+            pre_wave();
+            while (!send_handles_.empty() && !recv_handles_.empty()) {
+                poll(on_message);
+                // atomic_debug("Poll before");
+                if (termination_state == TerminationState::active) {
+                    atomic_debug("Reactivated");
+                    return false;
+                }
+            }
+            std::pair<size_t, size_t> reduced_count;
+            if (termination_request == MPI_REQUEST_NULL) {
+                local_count = {stats_.sent_messages, stats_.received_messages};
+                atomic_debug("Start reduce");
+                MPI_Iallreduce(&local_count, &reduced_count, 2, kamping::mpi_type_traits<size_t>::data_type(), MPI_SUM,
+                               MPI_COMM_WORLD, &termination_request);
+            }
+            wave_count++;
+            int reduce_finished = false;
+            while (!reduce_finished) {
+                poll(on_message);
+                // atomic_debug("Poll after inititated");
+                int err = MPI_Test(&termination_request, &reduce_finished, MPI_STATUS_IGNORE);
+                if (termination_state == TerminationState::active) {
+                    atomic_debug("Reactivated");
+                    return false;
+                }
+            }
+            atomic_debug("Reduce finished");
+            if (rank_ == 0) {
+                // atomic_debug("Wave count " + std::to_string(wave_count));
+            }
+            if (reduced_count == global_count && global_count.first == global_count.second && global_count.first != 0) {
+                atomic_debug("Terminated");
+                atomic_debug(reduced_count);
+                termination_state = TerminationState::terminated;
+                return true;
+            } else {
+                global_count = reduced_count;
+            }
+        }
+    }
+
 private:
-    enum class TerminationState { active, first_wave, first_wave_success, second_wave, terminated };
+    enum class TerminationState { active, trying_termination, terminated };
     std::vector<SendHandlePtr<T>> send_handles_;
     std::vector<ReceiveHandlePtr<T>> recv_handles_;
-    std::vector<SendHandlePtr<size_t>> control_send_handles_;
-    std::vector<ReceiveHandlePtr<size_t>> control_recv_handles_;
+    std::pair<size_t, size_t> local_count;
+    std::pair<size_t, size_t> reduced_count;
+    std::pair<size_t, size_t> global_count = {std::numeric_limits<size_t>::max(),
+                                              std::numeric_limits<size_t>::max() - 1};
+    MPI_Request termination_request = MPI_REQUEST_NULL;
     MessageStatistics stats_;
     int static const control_wave_tag = 478;
     size_t request_id_;
@@ -315,6 +351,8 @@ private:
     PEID size_;
     TerminationState termination_state = TerminationState::active;
     size_t number_of_waves = 0;
+    size_t messages_in_transit_ = 0;
+    size_t static const max_messages_in_transit_ = 1000;
 };
 
 }  // namespace message_queue

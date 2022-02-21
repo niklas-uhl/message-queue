@@ -34,8 +34,14 @@ set(CMAKE_SHARED_LINKER_FLAGS_ASAN
 
 find_package(MPI REQUIRED)
 
+#set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fsanitize=address -fsanitize=undefined")
+#set (CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fno-omit-frame-pointer -fsanitize=address -fsanitize=undefined")
+
+
 #set(GRAPH_IO_GENERATORS OFF)
-#add_subdirectory(extern/graph-io)
+add_subdirectory(extern/graph-io)
+
+add_subdirectory(extern/backward-cpp)
 
 add_library(message-queue INTERFACE)
 target_include_directories(message-queue INTERFACE include)
@@ -48,5 +54,6 @@ target_link_libraries(example message-queue)
 #add_executable(asynchronous asynchronous.cpp)
 #target_link_libraries(asynchronous MPI::MPI_CXX)
 
-#add_executable(connected_components connected_components.cpp)
-#target_link_libraries(connected_components message-queue graph-io)
+add_executable(bfs bfs.cpp ${BACKWARD_ENABLE})
+target_link_libraries(bfs message-queue graph-io)
+add_backward(bfs)
