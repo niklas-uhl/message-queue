@@ -27,7 +27,7 @@ int main(int argc, char* argv[]) {
     };
     auto splitter = [](std::vector<int>& buffer, auto on_message, PEID sender) {
         for (size_t i = 0; i < buffer.size(); i += message_size) {
-            on_message(buffer.begin() + i, buffer.begin() + i + message_size, sender);
+            on_message(buffer.cbegin() + i, buffer.cbegin() + i + message_size, sender);
         }
     };
     auto queue = message_queue::make_buffered_queue<int>(std::move(merger), std::move(splitter));
@@ -38,15 +38,15 @@ int main(int argc, char* argv[]) {
     message[1] = 0;
     for (size_t i = 0; i < 10; ++i) {
         message[2] = i;
-        queue.post_message(std::vector(message), (rank + rank_dist(eng)) % size);
+        queue.post_message(std::vector<int>(message), (rank + rank_dist(eng)) % size);
     }
-    auto on_message = [&](auto begin, auto end, PEID sender) {
+    auto on_message = [&](std::vector<int>::const_iterator begin, std::vector<int>::const_iterator end, PEID sender) {
         if (bernoulli_dist(eng)) {
             std::stringstream ss;
             ss << "Message " << *(begin + 2) << " from " << *begin << " arrived after " << *(begin + 1) << " hops.";
             atomic_debug(ss.str());
         } else {
-            auto msg = std::vector(begin, end);
+            auto msg = std::vector<int>(begin, end);
             msg[1]++;
             queue.post_message(std::move(msg), (rank + rank_dist(eng)) % size);
         }

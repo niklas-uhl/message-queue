@@ -14,7 +14,7 @@ class BufferedMessageQueue {
     static_assert(std::is_invocable_v<
                   Splitter,
                   std::vector<T>&,
-                  std::function<void(typename std::vector<T>::iterator, typename std::vector<T>::iterator, PEID)>,
+                  std::function<void(typename std::vector<T>::const_iterator, typename std::vector<T>::const_iterator, PEID)>,
                   PEID>);
     static_assert(std::is_invocable_v<Merger, std::vector<T>&, std::vector<T>, int>);
 
@@ -48,6 +48,9 @@ public:
             flush_all();
         }
     }
+    size_t threshold() const {
+        return threshold_;
+    }
 
     void flush(PEID receiver) {
         auto& buffer = buffers_[receiver];
@@ -70,7 +73,7 @@ public:
 
     template <typename MessageHandler>
     bool poll(MessageHandler&& on_message) {
-        static_assert(std::is_invocable_v<MessageHandler, typename std::vector<T>::iterator,
+        static_assert(std::is_invocable_v<MessageHandler, typename std::vector<T>::const_iterator,
                                           typename std::vector<T>::iterator, PEID>);
         return queue_.poll([&](std::vector<T> message, PEID sender) { split(message, on_message, sender); });
     }
@@ -90,9 +93,9 @@ public:
     bool try_terminate(MessageHandler&& on_message) {
         static_assert(std::is_invocable_v<MessageHandler, typename std::vector<T>::iterator,
                                           typename std::vector<T>::iterator, PEID>);
-        atomic_debug("Try terminate");
-        return queue_.try_terminate_impl([&](PEID sender, std::vector<T> message) { split(message, on_message, sender); },
-                              [&]() { flush_all(); });
+        //atomic_debug("Try terminate");
+        return queue_.try_terminate_impl(
+            [&](std::vector<T> message, PEID sender) { split(message, on_message, sender); }, [&]() { flush_all(); });
         /* for (auto buffer : buffers_) { */
         /*     atomic_debug(buffer); */
         /* } */
@@ -115,6 +118,10 @@ public:
         buffers_.clear();
         buffer_ocupacy_ = 0;
         overflows_ = 0;
+    }
+
+    size_t buffer_ocupacy() const {
+        return buffer_ocupacy_;
     }
 
 private:

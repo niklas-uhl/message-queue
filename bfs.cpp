@@ -95,16 +95,18 @@ std::vector<size_t> run_sequential(const std::string& input, graphio::InputForma
     return labels;
 }
 
-std::vector<size_t> run_distributed(const std::string& input, graphio::InputFormat format) {
+double run_distributed(const std::string& input, graphio::InputFormat format) {
     PEID rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     // MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
 
-    DEBUG_BARRIER(rank);
+    // DEBUG_BARRIER(rank);
     auto G_in = graphio::read_local_graph(input, format, rank, size);
     GraphWrapper G(std::move(G_in));
 
+    MPI_Barrier(MPI_COMM_WORLD);
+    double start = MPI_Wtime();
     graphio::NodeId source = 0;
     // Frontier<size_t> frontier;
     auto merge = [](std::vector<graphio::NodeId>& buffer, std::vector<graphio::NodeId> msg, int tag) {
@@ -147,34 +149,39 @@ std::vector<size_t> run_distributed(const std::string& input, graphio::InputForm
         });
         level++;
     }
-    std::vector<int> counts(size);
-    std::vector<int> displs(size);
-    if (rank == 0) {
-        counts.resize(size);
-        displs.resize(size);
-    }
-    int local_count = G.graph.local_node_count();
-    MPI_Gather(&local_count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
-    std::vector<size_t> all_labels;
-    if (rank == 0) {
-        std::exclusive_scan(counts.begin(), counts.end(), displs.begin(), 0);
-        all_labels.resize(displs.back() + counts.back());
-    }
-    MPI_Gatherv(G.labels.data(), G.labels.size(), MPI_UINT64_T, all_labels.data(), counts.data(), displs.data(),
-                MPI_UINT64_T, 0, MPI_COMM_WORLD);
-    return all_labels;
+    MPI_Barrier(MPI_COMM_WORLD);
+    double end = MPI_Wtime();
+    // atomic_debug(level);
+    //  std::vector<int> counts(size);
+    //  std::vector<int> displs(size);
+    //  if (rank == 0) {
+    //      counts.resize(size);
+    //      displs.resize(size);
+    //  }
+    //  int local_count = G.graph.local_node_count();
+    //  MPI_Gather(&local_count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+    //  std::vector<size_t> all_labels;
+    //  if (rank == 0) {
+    //      std::exclusive_scan(counts.begin(), counts.end(), displs.begin(), 0);
+    //      all_labels.resize(displs.back() + counts.back());
+    //  }
+    //  MPI_Gatherv(G.labels.data(), G.labels.size(), MPI_UINT64_T, all_labels.data(), counts.data(), displs.data(),
+    //              MPI_UINT64_T, 0, MPI_COMM_WORLD);
+    return end - start;
 }
 
-std::vector<size_t> run_distributed_async(const std::string& input, graphio::InputFormat format) {
+double run_distributed_async(const std::string& input, graphio::InputFormat format) {
     PEID rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     // MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
 
-    DEBUG_BARRIER(rank);
+    // DEBUG_BARRIER(rank);
     auto G_in = graphio::read_local_graph(input, format, rank, size);
     GraphWrapper G(std::move(G_in));
 
+    MPI_Barrier(MPI_COMM_WORLD);
+    double start = MPI_Wtime();
     graphio::NodeId source = 0;
     // Frontier<size_t> frontier;
     auto merge = [](std::vector<graphio::NodeId>& buffer, std::vector<graphio::NodeId> msg, int tag) {
@@ -186,77 +193,104 @@ std::vector<size_t> run_distributed_async(const std::string& input, graphio::Inp
 
     auto split = [](std::vector<graphio::NodeId>& buffer, auto on_message, PEID sender) {
         for (size_t i = 0; i < buffer.size(); i += 2) {
-            on_message(buffer.begin() + i, buffer.begin() + i + 2, sender);
+            on_message(buffer.cbegin() + i, buffer.cbegin() + i + 2, sender);
         }
     };
-    //auto queue = message_queue::MessageQueue<graphio::NodeId>();
+    // auto queue = message_queue::MessageQueue<graphio::NodeId>();
     auto queue = message_queue::make_buffered_queue<graphio::NodeId>(merge, split);
     std::deque<std::pair<graphio::NodeId, size_t>> local_queue;
-    auto on_message = [&](/*/std::vector<graphio::NodeId> message*/ auto begin, auto end, PEID sender [[maybe_unused]]) {
+    auto on_message = [&](/*/std::vector<graphio::NodeId> message*/ auto begin, auto end,
+                          PEID sender [[maybe_unused]]) {
         queue.reactivate();
         graphio::NodeId v = *begin;
-        //graphio::NodeId v = message[0];
+        // graphio::NodeId v = message[0];
         std::stringstream out;
         out << "Receive " << v << " from " << sender;
         // atomic_debug(out.str());
         assert(G.loc.is_local(v));
         size_t label = *(begin + 1);
-        //size_t label = message[1];
+        // size_t label = message[1];
         local_queue.emplace_back(v, label);
-        while (!local_queue.empty()) {
-            graphio::NodeId v;
-            size_t label;
-            std::tie(v, label) = local_queue.front();
-            local_queue.pop_front();
-            std::stringstream out;
-            out << "Pop " << v;
-            //atomic_debug(out.str());
-            if (!G.loc.is_local(v)) {
-                std::stringstream out;
-                out << "Sending " << v << " to " << G.loc.rank(v);
-                //atomic_debug(out.str());
-                queue.post_message({v, label}, G.loc.rank(v));
-                continue;
-            }
-            size_t& v_label = G.labels[G.idx.get_index(v)];
-            if (label < v_label) {
-                std::stringstream out;
-                out << "Discovered " << v;
-                //atomic_debug(out.str());
-                v_label = label;
-                G.idx.for_each_neighbor(v, [&](graphio::NodeId u) { local_queue.emplace_back(u, label + 1); });
-            } else {
-                std::stringstream out;
-                out << "Discarding " << v;
-                //atomic_debug(out.str());
-            }
-        }
     };
+    // queue.set_threshold(100);
+    queue.set_threshold(G.graph.local_node_count());
     if (G.loc.is_local(source)) {
         auto msg = {source, 0ul};
         on_message(msg.begin(), msg.end(), rank);
+    } else {
+        while (!queue.poll(on_message)) {
+        };
     }
-    queue.set_threshold(G.graph.local_node_count());
+    size_t discovered_nodes = 0;
+    do {
+        do {
+            while (!local_queue.empty()) {
+                graphio::NodeId v;
+                size_t label;
+                std::tie(v, label) = local_queue.front();
+                local_queue.pop_front();
+                std::stringstream out;
+                out << "Pop " << v;
+                // atomic_debug(out.str());
+                if (!G.loc.is_local(v)) {
+                    std::stringstream out;
+                    out << "Sending " << v << " to " << G.loc.rank(v);
+                    // atomic_debug(out.str());
+                    queue.post_message({v, label}, G.loc.rank(v));
+                    queue.poll(on_message);
+                    continue;
+                }
+                size_t& v_label = G.labels[G.idx.get_index(v)];
+                if (label < v_label) {
+                    std::stringstream out;
+                    discovered_nodes++;
+                    out << "Discovered " << v;
+                    // atomic_debug(out.str());
+                    v_label = label;
+                    G.idx.for_each_neighbor(v, [&](graphio::NodeId u) {
+                        if (G.loc.is_local(u)) {
+                            local_queue.emplace_back(u, label + 1);
+                        } else {
+                            queue.post_message({u, label + 1}, G.loc.rank(u));
+                        }
+                    });
+                } else {
+                    std::stringstream out;
+                    out << "Discarding " << v;
+                    // atomic_debug(out.str());
+                }
+                queue.poll(on_message);
+            }
+            //size_t new_threshold = G.graph.local_node_count() - discovered_nodes;
+            // atomic_debug(new_threshold);
+            //queue.set_threshold(new_threshold);
+            queue.flush_all();
+        } while (queue.poll(on_message));
+        queue.flush_all();
+    } while (!queue.try_terminate(on_message));
+    MPI_Barrier(MPI_COMM_WORLD);
+    double end = MPI_Wtime();
 
-    queue.terminate(on_message);
+    // queue.terminate(on_message);
     atomic_debug(queue.stats().sent_messages);
 
-    std::vector<int> counts(size);
-    std::vector<int> displs(size);
-    if (rank == 0) {
-        counts.resize(size);
-        displs.resize(size);
-    }
-    int local_count = G.graph.local_node_count();
-    MPI_Gather(&local_count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
-    std::vector<size_t> all_labels;
-    if (rank == 0) {
-        std::exclusive_scan(counts.begin(), counts.end(), displs.begin(), 0);
-        all_labels.resize(displs.back() + counts.back());
-    }
-    MPI_Gatherv(G.labels.data(), G.labels.size(), MPI_UINT64_T, all_labels.data(), counts.data(), displs.data(),
-                MPI_UINT64_T, 0, MPI_COMM_WORLD);
-    return all_labels;
+    // std::vector<int> counts(size);
+    // std::vector<int> displs(size);
+    // if (rank == 0) {
+    //     counts.resize(size);
+    //     displs.resize(size);
+    // }
+    // int local_count = G.graph.local_node_count();
+    // MPI_Gather(&local_count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+    // std::vector<size_t> all_labels;
+    // if (rank == 0) {
+    //     std::exclusive_scan(counts.begin(), counts.end(), displs.begin(), 0);
+    //     all_labels.resize(displs.back() + counts.back());
+    // }
+    // MPI_Gatherv(G.labels.data(), G.labels.size(), MPI_UINT64_T, all_labels.data(), counts.data(), displs.data(),
+    //             MPI_UINT64_T, 0, MPI_COMM_WORLD);
+    // return all_labels;
+    return end - start;
 }
 
 int main(int argc, char* argv[]) {
@@ -266,29 +300,29 @@ int main(int argc, char* argv[]) {
     backward::SignalHandling sh;
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    //MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
-    auto labels = run_distributed(argv[1], graphio::input_types.at(argv[2]));
+    // MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
+    auto time = run_distributed(argv[1], graphio::input_types.at(argv[2]));
     if (rank == 0) {
-        std::cout << "Distributed algorithm finished.\n";
+        std::cout << "Distributed algorithm finished in " << time << "s.\n";
     }
 
-    auto labels_async = run_distributed_async(argv[1], graphio::input_types.at(argv[2]));
+    auto time_async = run_distributed_async(argv[1], graphio::input_types.at(argv[2]));
     if (rank == 0) {
-        std::cout << "Distributed algorithm finished.\n";
+        std::cout << "Async algorithm finished in " << time_async << "s.\n";
     }
-    // for (size_t i = 0; i < labels.size(); i++) {
-    //     std::cout << i << "\t" << labels[i] << "\n";
+    // for (size_t i = 0; i < labels_async.size(); i++) {
+    //     std::cout << i << "\t" << labels_async[i] << "\n";
     // }
 
-    auto labels_seq = run_sequential(argv[1], graphio::input_types.at(argv[2]));
-    if (rank == 0) {
-        std::cout << "Sequential algorithm finished.\n";
-    }
+    // auto labels_seq = run_sequential(argv[1], graphio::input_types.at(argv[2]));
+    // if (rank == 0) {
+    //     std::cout << "Sequential algorithm finished.\n";
+    // }
 
-    if (rank == 0) {
-        bool correct = labels == labels_async;
-        std::cout << "Distributed algorithm works: \t" << std::boolalpha << correct << std::endl;
-    }
+    // if (rank == 0) {
+    //     bool correct = labels == labels_async;
+    //     std::cout << "Distributed algorithm works: \t" << std::boolalpha << correct << std::endl;
+    // }
 
     return MPI_Finalize();
 }

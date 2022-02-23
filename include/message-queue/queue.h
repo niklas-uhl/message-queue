@@ -62,10 +62,6 @@ class MessageQueue {
         PEID receiver = MPI_ANY_SOURCE;
 
         void initiate_send() {
-            if (&this->request == NULL) {
-                std::abort();
-            }
-
             // atomic_debug(this->request_id);
             int err = MPI_Isend(this->message.data(), this->message.size(), kamping::mpi_type_traits<S>::data_type(),
                                 receiver, this->tag, MPI_COMM_WORLD, &this->request);
@@ -221,6 +217,9 @@ public:
             stats_.received_messages++;
             stats_.receive_volume += handle.message.size();
             something_happenend = true;
+            if (handle.message.size() == 0) {
+                throw "Error";
+            }
             on_message(std::move(handle.message), handle.sender);
         });
         return something_happenend;
@@ -251,7 +250,7 @@ public:
 private:
     template <typename MessageHandler, typename PreWaveHook>
     void terminate_impl(MessageHandler&& on_message, PreWaveHook&& pre_wave) {
-        atomic_debug("Inner terminate");
+        //atomic_debug("Inner terminate");
         std::pair<size_t, size_t> global_count = {0, 0};
         int wave_count = 0;
         while (true) {
@@ -259,7 +258,7 @@ private:
             while (!send_handles_.empty() && !recv_handles_.empty()) {
                 poll(on_message);
             }
-            atomic_debug("Handles empty");
+            //atomic_debug("Handles empty");
             std::pair<size_t, size_t> local_count = {stats_.sent_messages, stats_.received_messages};
             std::pair<size_t, size_t> reduced_count;
             MPI_Request reduce_request;
@@ -290,22 +289,25 @@ private:
 
     template <typename MessageHandler, typename PreWaveHook>
     bool try_terminate_impl(MessageHandler&& on_message, PreWaveHook&& pre_wave) {
+        if (size_ == 1) {
+            return true;
+        }
         termination_state = TerminationState::trying_termination;
         int wave_count = 0;
         while (true) {
             pre_wave();
             while (!send_handles_.empty() && !recv_handles_.empty()) {
                 poll(on_message);
-                // atomic_debug("Poll before");
+                //atomic_debug("Poll before");
                 if (termination_state == TerminationState::active) {
-                    atomic_debug("Reactivated");
+                    //atomic_debug("Reactivated");
                     return false;
                 }
             }
             std::pair<size_t, size_t> reduced_count;
             if (termination_request == MPI_REQUEST_NULL) {
                 local_count = {stats_.sent_messages, stats_.received_messages};
-                atomic_debug("Start reduce");
+                //atomic_debug("Start reduce");
                 MPI_Iallreduce(&local_count, &reduced_count, 2, kamping::mpi_type_traits<size_t>::data_type(), MPI_SUM,
                                MPI_COMM_WORLD, &termination_request);
             }
@@ -313,20 +315,20 @@ private:
             int reduce_finished = false;
             while (!reduce_finished) {
                 poll(on_message);
-                // atomic_debug("Poll after inititated");
+                //atomic_debug("Poll after inititated");
                 int err = MPI_Test(&termination_request, &reduce_finished, MPI_STATUS_IGNORE);
                 if (termination_state == TerminationState::active) {
-                    atomic_debug("Reactivated");
+                    //atomic_debug("Reactivated");
                     return false;
                 }
             }
-            atomic_debug("Reduce finished");
+            //atomic_debug("Reduce finished");
             if (rank_ == 0) {
                 // atomic_debug("Wave count " + std::to_string(wave_count));
             }
             if (reduced_count == global_count && global_count.first == global_count.second && global_count.first != 0) {
-                atomic_debug("Terminated");
-                atomic_debug(reduced_count);
+                //atomic_debug("Terminated");
+                //atomic_debug(reduced_count);
                 termination_state = TerminationState::terminated;
                 return true;
             } else {
