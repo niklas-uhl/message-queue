@@ -201,7 +201,6 @@ struct AsyncParameterSet {
                  !dynamic_buffering.empty() ? dynamic_buffering : std::vector<bool>{false}) {
                 for (auto dampening_factor_value :
                      !dampening_factor.empty() ? dampening_factor : std::vector<double>{.5}) {
-                    std::cout << dampening_factor_value << std::endl;
                     for (auto poll_after_post_value :
                          !poll_after_post.empty() ? poll_after_post : std::vector<bool>{false}) {
                         for (auto poll_after_pop_value :
