@@ -149,7 +149,7 @@ public:
     }
 
     void post_message(std::vector<T>&& message, PEID receiver, int tag = 0) {
-        assert(receiver != rank_);
+        //assert(receiver != rank_);
         if (message.empty()) {
             return;
         }

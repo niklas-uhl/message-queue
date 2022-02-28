@@ -4,3 +4,6 @@
 [submodule "extern/backward-cpp"]
 	path = extern/backward-cpp
 	url = https://github.com/bombela/backward-cpp
+[submodule "extern/cli11"]
+	path = extern/cli11
+	url = https://github.com/CLIUtils/ClI11

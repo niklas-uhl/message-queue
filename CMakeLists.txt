@@ -42,6 +42,7 @@ find_package(MPI REQUIRED)
 add_subdirectory(extern/graph-io)
 
 add_subdirectory(extern/backward-cpp)
+add_subdirectory(extern/cli11)
 
 add_library(message-queue INTERFACE)
 target_include_directories(message-queue INTERFACE include)
@@ -55,5 +56,5 @@ target_link_libraries(example message-queue)
 #target_link_libraries(asynchronous MPI::MPI_CXX)
 
 add_executable(bfs bfs.cpp ${BACKWARD_ENABLE})
-target_link_libraries(bfs message-queue graph-io)
+target_link_libraries(bfs message-queue graph-io CLI11::CLI11)
 add_backward(bfs)
