@@ -19,14 +19,14 @@ function log2 {
 function nodes_and_queue() {
     local tasks=$1;
     nodes=$(( ($tasks + $tasks_per_node - 1) / $tasks_per_node ))
-    queue=""
-    if [[ $nodes -le 16 ]]; then
-       queue=micro
-    elif [[ $nodes -le 768 ]]; then
-       queue=general
-    else
-       queue=large
-    fi
+    queue=cpuonly
+    # if [[ $nodes -le 16 ]]; then
+    #    queue=micro
+    # elif [[ $nodes -le 768 ]]; then
+    #    queue=general
+    # else
+    #    queue=large
+    # fi
 }
 
 function sbatch_preamble() {
@@ -44,14 +44,14 @@ function sbatch_preamble() {
     echo \#SBATCH -J ${job_name}
     echo \#SBATCH --partition=${queue}
     echo \#SBATCH --time=${time}
-    echo \#SBATCH --get-user-env
-    echo \#SBATCH --account=${SUPERMUC_ACCOUNT}
+    #echo \#SBATCH --get-user-env
+    #echo \#SBATCH --account=${SUPERMUC_ACCOUNT}
     echo
     echo module load slurm_setup
     echo
 }
 
 function mpi_exec_call() {
-    echo mpiexec -n \$SLURM_NTASKS
+    echo mpirun --bind-to core --map-by core -report-bindings
 }
 

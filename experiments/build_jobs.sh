@@ -1,11 +1,11 @@
 #!/bin/bash
 
-SUPERMUC_OUTPUT_DIR=$SCRATCH/logs/message-queue
+SUPERMUC_OUTPUT_DIR=$(ws_find message-queue)/logs
 SUPERMUC_ACCOUNT=
-JOB_DIR=jobs
-binary=$(realpath ${0%/*}/../build-clang/bfs)
+JOB_DIR=$HOME/jobs
+binary=$(realpath ${0%/*}/../build/bfs)
 scale_weak=true
-source sbatch.sh
+source ${0%/*}/sbatch.sh
 
 n_rank=(64 256 1024 2048 4096)
 num_local_vertices=14
