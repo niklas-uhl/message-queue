@@ -24,6 +24,7 @@ int main(int argc, char* argv[]) {
         for (auto elem : msg) {
             buffer.emplace_back(elem);
         }
+        return msg.size();
     };
     auto splitter = [](std::vector<int>& buffer, auto on_message, PEID sender) {
         for (size_t i = 0; i < buffer.size(); i += message_size) {
