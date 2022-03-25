@@ -16,7 +16,7 @@ class BufferedMessageQueue {
                   std::vector<T>&,
                   std::function<void(typename std::vector<T>::const_iterator, typename std::vector<T>::const_iterator, PEID)>,
                   PEID>);
-    static_assert(std::is_invocable_v<Merger, std::vector<T>&, std::vector<T>, int>);
+    static_assert(std::is_invocable_r_v<size_t, Merger, std::vector<T>&, std::vector<T>, int>);
 
 public:
     BufferedMessageQueue(Merger&& merge, Splitter&& split)
@@ -30,10 +30,8 @@ public:
 
     void post_message(std::vector<T>&& message, PEID receiver, int tag = 0) {
         auto& buffer = buffers_[receiver];
-        size_t old_buffer_size = buffer.size();
-        merge(buffer, std::forward<std::vector<T>>(message), tag);
-        size_t new_buffer_size = buffer.size();
-        buffer_ocupacy_ += (new_buffer_size - old_buffer_size);
+        size_t added_elements = merge(buffer, std::forward<std::vector<T>>(message), tag);
+        buffer_ocupacy_ += added_elements;
         if (buffer_ocupacy_ > threshold_) {
             overflows_++;
             flush_all();

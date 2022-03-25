@@ -20,6 +20,8 @@ template <typename T>
 class MessageQueue {
     template <class U, class Merger, class Splitter>
     friend class BufferedMessageQueue;
+    template <class U, class Merger, class Splitter>
+    friend class ConcurrentBufferedMessageQueue;
     static_assert(kamping::mpi_type_traits<T>::is_builtin, "Only builtin MPI types are supported");
 
     enum class State { posted, initiated, completed };
@@ -261,6 +263,14 @@ public:
 
     void reactivate() {
         termination_state = TerminationState::active;
+    }
+
+    PEID rank() const {
+        return rank_;
+    }
+
+    PEID size() const {
+        return size_;
     }
 
 private:

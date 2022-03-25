@@ -121,6 +121,7 @@ double run_distributed(GraphWrapper& G) {
         for (auto elem : msg) {
             buffer.emplace_back(elem);
         }
+        return msg.size();
     };
 
     auto split = [](std::vector<graphio::NodeId>& buffer, auto on_message, PEID sender) {
@@ -240,6 +241,7 @@ double run_distributed_async(GraphWrapper& G, const AsyncParameters& params) {
         for (auto elem : msg) {
             buffer.emplace_back(elem);
         }
+        return msg.size();
         // atomic_debug(buffer);
     };
 
