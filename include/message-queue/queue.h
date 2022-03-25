@@ -219,24 +219,25 @@ public:
             auto handle = result.value().template handle<T>();
             handle->request_id = this->request_id_;
             this->request_id_++;
+#ifdef MESSAGE_QUEUE_BLOCKING_RECEIVE
             handle->receive();
             stats_.received_messages++;
             stats_.receive_volume += handle->message.size();
             something_happenend = true;
             on_message(std::move(handle->message), handle->sender);
-            // recv_handles_.emplace_back(std::move(handle));
-            // recv_handles_.back()->start_receive();
+#else
+            recv_handles_.emplace_back(std::move(handle));
+            recv_handles_.back()->start_receive();
+#endif
         }
-        // size_t i = 0;
-        // check_and_remove(recv_handles_, [&](ReceiveHandle<T>& handle) {
-        //     stats_.received_messages++;
-        //     stats_.receive_volume += handle.message.size();
-        //     something_happenend = true;
-        //     if (handle.message.size() == 0) {
-        //         throw "Error";
-        //     }
-        //     on_message(std::move(handle.message), handle.sender);
-        // });
+#ifndef MESSAGE_QUEUE_BLOCKING_RECEIVE
+        check_and_remove(recv_handles_, [&](ReceiveHandle<T>& handle) {
+            stats_.received_messages++;
+            stats_.receive_volume += handle.message.size();
+            something_happenend = true;
+            on_message(std::move(handle.message), handle.sender);
+        });
+#endif
         return something_happenend;
     }
 

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.15)
 project(message-queue LANGUAGES CXX)
 
+option(MESSAGE_QUEUE_BLOCKING_RECEIVE OFF "Receive messages blocking")
+
 get_property(isMultiConfig GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 
 if(isMultiConfig)
@@ -48,6 +50,9 @@ add_library(message-queue INTERFACE)
 target_include_directories(message-queue INTERFACE include)
 target_link_libraries(message-queue INTERFACE MPI::MPI_CXX)
 target_compile_options(message-queue INTERFACE -std=c++17)
+if (MESSAGE_QUEUE_BLOCKING_RECEIVE)
+  target_compile_definitions(message-queue INTERFACE MESSAGE_QUEUE_BLOCKING_RECEIVE)
+endif()
 
 add_executable(example example.cpp)
 target_link_libraries(example message-queue)
