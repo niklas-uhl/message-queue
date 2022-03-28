@@ -72,7 +72,7 @@ public:
     template <typename MessageHandler>
     bool poll(MessageHandler&& on_message) {
         static_assert(std::is_invocable_v<MessageHandler, typename std::vector<T>::const_iterator,
-                                          typename std::vector<T>::iterator, PEID>);
+                                          typename std::vector<T>::const_iterator, PEID>);
         return queue_.poll([&](std::vector<T> message, PEID sender) { split(message, on_message, sender); });
     }
 
