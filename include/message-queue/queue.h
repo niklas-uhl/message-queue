@@ -77,7 +77,9 @@ class MessageQueue {
 
     template <class S>
     struct ReceiveHandle : MessageHandle<S> {
+#ifdef MESSAGE_QUEUE_MATCHED_RECV
         MPI_Message matched_message;
+#endif
         MPI_Status status;
         PEID sender = MPI_ANY_SOURCE;
 
@@ -87,8 +89,13 @@ class MessageQueue {
             }
             this->state = State::initiated;
             this->message.resize(this->message_size);
+#ifdef MESSAGE_QUEUE_MATCHED_RECV
             MPI_Imrecv(this->message.data(), this->message.size(), kamping::mpi_type_traits<S>::data_type(),
                        &matched_message, &(this->request));
+#else
+            MPI_Irecv(this->message.data(), this->message.size(), kamping::mpi_type_traits<S>::data_type(),
+                      this->sender, this->tag, MPI_COMM_WORLD, &(this->request));
+#endif
         }
 
         void receive() {
@@ -96,8 +103,13 @@ class MessageQueue {
                 return;
             }
             this->message.resize(this->message_size);
+#ifdef MESSAGE_QUEUE_MATCHED_RECV
             MPI_Mrecv(this->message.data(), this->message.size(), kamping::mpi_type_traits<S>::data_type(),
-                      &matched_message, MPI_STATUS_IGNORE);
+                       &this->matched_message, MPI_STATUS_IGNORE);
+#else
+            MPI_Recv(this->message.data(), this->message.size(), kamping::mpi_type_traits<S>::data_type(), this->sender,
+                     this->tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+#endif
             this->state = State::completed;
         }
     };
@@ -117,7 +129,9 @@ class MessageQueue {
             int message_size;
             MPI_Get_count(&status, kamping::mpi_type_traits<S>::data_type(), &message_size);
             handle->message_size = message_size;
+#ifdef MESSAGE_QUEUE_MATCHED_RECV
             handle->matched_message = matched_message;
+#endif
             handle->tag = status.MPI_TAG;
             handle->sender = status.MPI_SOURCE;
             return handle;
@@ -127,7 +141,11 @@ class MessageQueue {
     static std::optional<ProbeResult> probe(PEID source = MPI_ANY_SOURCE, PEID tag = MPI_ANY_TAG) {
         ProbeResult result;
         int message_found = false;
+#ifdef MESSAGE_QUEUE_MATCHED_RECV
         MPI_Improbe(source, tag, MPI_COMM_WORLD, &message_found, &result.matched_message, &result.status);
+#else
+        MPI_Iprobe(source, tag, MPI_COMM_WORLD, &message_found, &result.status);
+#endif
         if (message_found) {
             result.sender = result.status.MPI_SOURCE;
             result.tag = result.status.MPI_TAG;
@@ -177,7 +195,7 @@ public:
     bool poll(MessageHandler&& on_message) {
         // atomic_debug("Inner poll");
         static_assert(std::is_invocable_v<MessageHandler, std::vector<T>, PEID>);
-        auto check_and_remove = [&](auto& handles, auto on_request_finish) {
+        auto check_and_remove [[maybe_unused]] = [&](auto& handles, auto on_request_finish) {
             size_t i = 0;
             while (i < handles.size()) {
                 auto& handle = handles[i];
