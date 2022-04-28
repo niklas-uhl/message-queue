@@ -334,7 +334,7 @@ double run_distributed_async(GraphWrapper& G, const AsyncParameters& params) {
     double end = MPI_Wtime();
 
     // queue.terminate(on_message);
-    atomic_debug(queue.stats().sent_messages);
+    atomic_debug(queue.stats().sent_messages.load());
 
     // std::vector<int> counts(size);
     // std::vector<int> displs(size);

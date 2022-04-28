@@ -71,15 +71,15 @@ public:
 
     template <typename MessageHandler>
     bool poll(MessageHandler&& on_message) {
-        static_assert(std::is_invocable_v<MessageHandler, typename std::vector<T>::const_iterator,
-                                          typename std::vector<T>::const_iterator, PEID>);
+        // static_assert(std::is_invocable_v<MessageHandler, typename std::vector<T>::const_iterator,
+        //                                   typename std::vector<T>::const_iterator, PEID>);
         return queue_.poll([&](std::vector<T> message, PEID sender) { split(message, on_message, sender); });
     }
 
     template <typename MessageHandler>
     void terminate(MessageHandler&& on_message) {
-        static_assert(std::is_invocable_v<MessageHandler, typename std::vector<T>::iterator,
-                                          typename std::vector<T>::iterator, PEID>);
+        // static_assert(std::is_invocable_v<MessageHandler, typename std::vector<T>::iterator,
+        //                                   typename std::vector<T>::iterator, PEID>);
         queue_.terminate_impl([&](std::vector<T> message, PEID sender) { split(message, on_message, sender); },
                               [&]() { flush_all(); });
         /* for (auto buffer : buffers_) { */
@@ -89,8 +89,8 @@ public:
 
     template <typename MessageHandler>
     bool try_terminate(MessageHandler&& on_message) {
-        static_assert(std::is_invocable_v<MessageHandler, typename std::vector<T>::iterator,
-                                          typename std::vector<T>::iterator, PEID>);
+        //static_assert(std::is_invocable_v<MessageHandler, typename std::vector<T>::iterator,
+                                          // typename std::vector<T>::iterator, PEID>);
         //atomic_debug("Try terminate");
         return queue_.try_terminate_impl(
             [&](std::vector<T> message, PEID sender) { split(message, on_message, sender); }, [&]() { flush_all(); });
