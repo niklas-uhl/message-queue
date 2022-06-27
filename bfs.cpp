@@ -414,9 +414,9 @@ int main(int argc, char* argv[]) {
     if (input == "gnm") {
         gen_params.m = gen_params.n + 4;
         gen_params.generator = "gnm_undirected";
-        G_in = graphio::gen_local_graph(gen_params, rank, size);
+        G_in = graphio::gen_local_graph(gen_params, rank, size).G;
     } else {
-        G_in = graphio::read_local_graph(input, graphio::input_types.at(input_format), rank, size);
+        G_in = graphio::read_local_graph(input, graphio::input_types.at(input_format), rank, size).G;
     }
     GraphWrapper G(std::move(G_in));
 
