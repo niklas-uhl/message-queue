@@ -11,12 +11,12 @@ namespace message_queue {
 
 template <class T, typename Merger, typename Splitter>
 class BufferedMessageQueue {
-    static_assert(std::is_invocable_v<
-                  Splitter,
-                  std::vector<T>&,
-                  std::function<void(typename std::vector<T>::const_iterator, typename std::vector<T>::const_iterator, PEID)>,
-                  PEID>);
-    static_assert(std::is_invocable_r_v<size_t, Merger, std::vector<T>&, std::vector<T>, int>);
+    // static_assert(std::is_invocable_v<
+    //               Splitter,
+    //               std::vector<T>&,
+    //               std::function<void(typename std::vector<T>::const_iterator, typename std::vector<T>::const_iterator, PEID)>,
+    //               PEID>);
+    // static_assert(std::is_invocable_r_v<size_t, Merger, std::vector<T>&, std::vector<T>, int>);
 
 public:
     BufferedMessageQueue(Merger&& merge, Splitter&& split)

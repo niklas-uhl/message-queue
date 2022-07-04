@@ -361,6 +361,7 @@ private:
                 poll(on_message);
                 // atomic_debug("Poll after inititated");
                 int err = MPI_Test(&termination_request, &reduce_finished, MPI_STATUS_IGNORE);
+                check_mpi_error(err, __FILE__, __LINE__);
                 if (termination_state == TerminationState::active) {
                     // atomic_debug("Reactivated");
                     return false;
