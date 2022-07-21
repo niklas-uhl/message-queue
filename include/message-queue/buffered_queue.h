@@ -14,11 +14,12 @@ class BufferedMessageQueue {
     // static_assert(std::is_invocable_v<
     //               Splitter,
     //               std::vector<T>&,
-    //               std::function<void(typename std::vector<T>::const_iterator, typename std::vector<T>::const_iterator, PEID)>,
-    //               PEID>);
+    //               std::function<void(typename std::vector<T>::const_iterator, typename
+    //               std::vector<T>::const_iterator, PEID)>, PEID>);
     // static_assert(std::is_invocable_r_v<size_t, Merger, std::vector<T>&, std::vector<T>, int>);
 
 public:
+    using value_type = T;
     BufferedMessageQueue(Merger&& merge, Splitter&& split)
         : queue_(),
           buffers_(),
@@ -89,9 +90,9 @@ public:
 
     template <typename MessageHandler>
     bool try_terminate(MessageHandler&& on_message) {
-        //static_assert(std::is_invocable_v<MessageHandler, typename std::vector<T>::iterator,
-                                          // typename std::vector<T>::iterator, PEID>);
-        //atomic_debug("Try terminate");
+        // static_assert(std::is_invocable_v<MessageHandler, typename std::vector<T>::iterator,
+        //  typename std::vector<T>::iterator, PEID>);
+        // atomic_debug("Try terminate");
         return queue_.try_terminate_impl(
             [&](std::vector<T> message, PEID sender) { split(message, on_message, sender); }, [&]() { flush_all(); });
         /* for (auto buffer : buffers_) { */
@@ -101,6 +102,13 @@ public:
 
     void reactivate() {
         queue_.reactivate();
+    }
+
+    void check_for_overflow_and_flush() {
+        if (buffer_ocupacy() > threshold_) {
+            overflows_++;
+            flush_all();
+        }
     }
 
     size_t overflows() const {
