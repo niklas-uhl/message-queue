@@ -26,14 +26,14 @@ int main(int argc, char* argv[]) {
         }
         return msg.size();
     };
-    auto splitter = [](std::vector<int>& buffer, auto on_message, PEID sender) {
+    auto splitter = [](std::vector<int>& buffer, auto on_message, message_queue::PEID sender) {
         for (size_t i = 0; i < buffer.size(); i += message_size) {
             on_message(buffer.cbegin() + i, buffer.cbegin() + i + message_size, sender);
         }
     };
     auto queue = message_queue::make_buffered_queue<int>(std::move(merger), std::move(splitter));
     queue.set_threshold(200);
-    PEID receiver = rank_dist(eng);
+    message_queue::PEID receiver = rank_dist(eng);
     std::vector<int> message(message_size);
     message[0] = rank;
     message[1] = 0;
@@ -41,11 +41,11 @@ int main(int argc, char* argv[]) {
         message[2] = i;
         queue.post_message(std::vector<int>(message), (rank + rank_dist(eng)) % size);
     }
-    auto on_message = [&](std::vector<int>::const_iterator begin, std::vector<int>::const_iterator end, PEID sender) {
+    auto on_message = [&](std::vector<int>::const_iterator begin, std::vector<int>::const_iterator end, message_queue::PEID sender) {
         if (bernoulli_dist(eng)) {
             std::stringstream ss;
             ss << "Message " << *(begin + 2) << " from " << *begin << " arrived after " << *(begin + 1) << " hops.";
-            atomic_debug(ss.str());
+            message_queue::atomic_debug(ss.str());
         } else {
             auto msg = std::vector<int>(begin, end);
             msg[1]++;
@@ -54,6 +54,6 @@ int main(int argc, char* argv[]) {
     };
     queue.poll(on_message);
     queue.terminate(on_message);
-    atomic_debug(queue.overflows());
+    message_queue::atomic_debug(queue.overflows());
     return MPI_Finalize();
 }

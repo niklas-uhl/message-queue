@@ -2,8 +2,7 @@
 // Created by Tim Niklas Uhl on 19.11.20.
 //
 
-#ifndef PARALLEL_TRIANGLE_COUNTER_UTIL_H
-#define PARALLEL_TRIANGLE_COUNTER_UTIL_H
+#pragma once
 
 #include <mpi.h>
 #include <unistd.h>
@@ -18,34 +17,35 @@
 #include <string>
 #include <vector>
 
+namespace message_queue {
 using PEID = int;
 
 #ifndef DEBUG_BARRIER
 // #ifndef NDEBUG
-#define DEBUG_BARRIER(rank)                                                                    \
-    {                                                                                          \
-        char hostname[256];                                             \
-        gethostname(hostname, sizeof(hostname));                        \
+#define DEBUG_BARRIER(rank)                                                            \
+    {                                                                                  \
+        char hostname[256];                                                            \
+        gethostname(hostname, sizeof(hostname));                                       \
         printf("PID %d on %s (rank %d) ready for attach\n", getpid(), hostname, rank); \
-        fflush(stdout);                                                 \
-        if (std::getenv("DEBUG_BARRIER") != nullptr) {                                         \
-            std::string value(std::getenv("DEBUG_BARRIER"));                                   \
-            std::string delimiter = ":";                                                       \
-            size_t pos = 0;                                                                    \
-            std::string token;                                                                 \
-            std::vector<int> PEs;                                                              \
-            while ((pos = value.find(delimiter)) != std::string::npos) {                       \
-                token = value.substr(0, pos);                                                  \
-                PEs.push_back(std::atoi(token.c_str()));                                       \
-                value.erase(0, pos + delimiter.length());                                      \
-            }                                                                                  \
-            PEs.push_back(std::atoi(value.c_str()));                                           \
-            if (std::find(PEs.begin(), PEs.end(), rank) != PEs.end()) {                        \
-                volatile int i = 0;                                                            \
-                while (0 == i)                                                                 \
-                    sleep(5);                                                                  \
-            }                                                                                  \
-        }                                                                                      \
+        fflush(stdout);                                                                \
+        if (std::getenv("DEBUG_BARRIER") != nullptr) {                                 \
+            std::string value(std::getenv("DEBUG_BARRIER"));                           \
+            std::string delimiter = ":";                                               \
+            size_t pos = 0;                                                            \
+            std::string token;                                                         \
+            std::vector<int> PEs;                                                      \
+            while ((pos = value.find(delimiter)) != std::string::npos) {               \
+                token = value.substr(0, pos);                                          \
+                PEs.push_back(std::atoi(token.c_str()));                               \
+                value.erase(0, pos + delimiter.length());                              \
+            }                                                                          \
+            PEs.push_back(std::atoi(value.c_str()));                                   \
+            if (std::find(PEs.begin(), PEs.end(), rank) != PEs.end()) {                \
+                volatile int i = 0;                                                    \
+                while (0 == i)                                                         \
+                    sleep(5);                                                          \
+            }                                                                          \
+        }                                                                              \
     };
 // #else
 // #define DEBUG_BARRIER(rank)
@@ -122,5 +122,4 @@ constexpr unsigned long long log2(unsigned long long x) {
     return log;
 #endif
 }
-
-#endif  // PARALLEL_TRIANGLE_COUNTER_UTIL_H
+}  // namespace message_queue

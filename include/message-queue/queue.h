@@ -291,7 +291,6 @@ public:
         return size_;
     }
 
-private:
     template <typename MessageHandler, typename PreWaveHook>
     void terminate_impl(MessageHandler&& on_message, PreWaveHook&& pre_wave) {
         // atomic_debug("Inner terminate");

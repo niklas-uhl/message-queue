@@ -18,9 +18,13 @@
 #include "graph-io/gen_parameters.h"
 #include "graph-io/graph_definitions.h"
 #include "graph-io/local_graph_view.h"
+#include "message-queue/debug_print.h"
 #include "message-queue/buffered_queue.h"
 #include "message-queue/debug_print.h"
 #include "message-queue/queue.h"
+
+using message_queue::PEID;
+using message_queue::atomic_debug;
 
 struct GraphWrapper {
     GraphWrapper(graphio::LocalGraphView&& G)
