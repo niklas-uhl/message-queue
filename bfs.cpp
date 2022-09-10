@@ -277,7 +277,7 @@ double run_distributed_async(GraphWrapper& G, const AsyncParameters& params) {
         queue.set_threshold(G.graph.local_node_count());
     }
     if (G.loc.is_local(source)) {
-        auto msg = {source, 0ul};
+        auto msg = {source, graphio::NodeId{0}};
         on_message(msg.begin(), msg.end(), rank);
     } else {
         while (!queue.poll(on_message)) {
