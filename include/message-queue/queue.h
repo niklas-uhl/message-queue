@@ -398,7 +398,7 @@ private:
     TerminationState termination_state = TerminationState::active;
     size_t number_of_waves = 0;
     size_t messages_in_transit_ = 0;
-    size_t static const max_messages_in_transit_ = 1000;
+    size_t static const max_messages_in_transit_ = 10;
 };
 
 }  // namespace message_queue
