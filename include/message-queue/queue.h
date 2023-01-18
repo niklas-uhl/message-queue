@@ -1,6 +1,7 @@
 #pragma once
 
 #include <mpi.h>
+#include <atomic>
 #include <cstddef>
 #include <limits>
 #include <memory>
@@ -187,8 +188,8 @@ public:
         // std::cout << message.size() <<"\n";
         size_t message_size = message.size();
         post_message_impl(send_handles_, std::move(message), receiver, tag);
-        stats_.sent_messages++;
-        stats_.send_volume += message_size;
+        stats_.sent_messages.fetch_add(1, std::memory_order_relaxed);
+        stats_.send_volume.fetch_add(message_size, std::memory_order_relaxed);
     }
 
     template <typename MessageHandler>
@@ -241,8 +242,8 @@ public:
             this->request_id_++;
 #ifdef MESSAGE_QUEUE_BLOCKING_RECEIVE
             handle->receive();
-            stats_.received_messages++;
-            stats_.receive_volume += handle->message.size();
+            stats_.received_messages.fetch_add(1, std::memory_order_relaxed);
+            stats_.receive_volume.fetch_add(handle->message.size(), std::memory_order_relaxed);
             something_happenend = true;
             on_message(std::move(handle->message), handle->sender);
 #else
@@ -252,8 +253,8 @@ public:
         }
 #ifndef MESSAGE_QUEUE_BLOCKING_RECEIVE
         check_and_remove(recv_handles_, [&](ReceiveHandle<T>& handle) {
-            stats_.received_messages++;
-            stats_.receive_volume += handle.message.size();
+            stats_.received_messages.fetch_add(1, std::memory_order_relaxed);
+            stats_.receive_volume.fetch_add(handle->message.size(), std::memory_order_relaxed);
             something_happenend = true;
             on_message(std::move(handle.message), handle.sender);
         });
