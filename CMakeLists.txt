@@ -6,6 +6,7 @@ option(MESSAGE_QUEUE_MATCHED_RECV "Use MPI_Mrecv" OFF)
 message(STATUS BLOCKING_RECEIVE ${MESSAGE_QUEUE_BLOCKING_RECEIVE})
 
 find_package(MPI REQUIRED)
+find_package(Boost REQUIRED COMPONENTS mpi )
 
 #set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fsanitize=address ")
 #set (CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fno-omit-frame-pointer -fsanitize=address ")
@@ -23,7 +24,7 @@ endif()
 
 add_library(message-queue INTERFACE)
 target_include_directories(message-queue INTERFACE include)
-target_link_libraries(message-queue INTERFACE MPI::MPI_CXX)
+target_link_libraries(message-queue INTERFACE MPI::MPI_CXX Boost::mpi)
 target_compile_options(message-queue INTERFACE -std=c++17)
 if (MESSAGE_QUEUE_BLOCKING_RECEIVE)
   target_compile_definitions(message-queue INTERFACE MESSAGE_QUEUE_BLOCKING_RECEIVE)
