@@ -1,46 +1,69 @@
-#include <graph-io/graph_io.h>
+#include <context.h>
+#include <kagen/kagen.h>
 #include <mpi.h>
+#include <CLI/App.hpp>
 #include <CLI/CLI.hpp>
 #include <algorithm>
+#include <backward.hpp>
 #include <cstddef>
 #include <deque>
 #include <ios>
+#include <kassert/kassert.hpp>
 #include <limits>
 #include <numeric>
 #include <queue>
 #include <string>
 #include <thread>
 #include <vector>
-#include "CLI/App.hpp"
-#include "backward.hpp"
-#include "graph-io/definitions.h"
-#include "graph-io/distributed_graph_io.h"
-#include "graph-io/gen_parameters.h"
-#include "graph-io/graph_definitions.h"
-#include "graph-io/local_graph_view.h"
-#include "message-queue/debug_print.h"
 #include "message-queue/buffered_queue.h"
 #include "message-queue/debug_print.h"
 #include "message-queue/queue.h"
 
-using message_queue::PEID;
 using message_queue::atomic_debug;
+using message_queue::PEID;
+using NodeId = kagen::SInt;
 
 struct GraphWrapper {
-    GraphWrapper(graphio::LocalGraphView&& G)
-        : graph(G), idx(G.build_indexer()), loc(G.build_locator(MPI_COMM_WORLD)), labels(G.local_node_count()) {
+    GraphWrapper(kagen::Graph&& G) : graph(G), my_rank(), labels(G.NumberOfLocalVertices()), vertex_distribution() {
         for (size_t i = 0; i < labels.size(); ++i) {
             labels[i] = std::numeric_limits<size_t>::max();
         }
+        KASSERT(graph.xadj.size() == graph.NumberOfLocalVertices() + 1);
+        KASSERT(graph.representation == kagen::GraphRepresentation::CSR);
+        vertex_distribution = kagen::BuildVertexDistribution<NodeId>(graph, KAGEN_MPI_SINT, MPI_COMM_WORLD);
+        MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
     }
-    graphio::LocalGraphView graph;
-    graphio::LocalGraphView::Indexer idx;
-    graphio::LocalGraphView::NodeLocator loc;
+
+    kagen::Graph graph;
+    PEID my_rank;
     std::vector<size_t> labels;
+    std::vector<NodeId> vertex_distribution;
 
     void reset_labels() {
         for (size_t i = 0; i < labels.size(); ++i) {
             labels[i] = std::numeric_limits<size_t>::max();
+        }
+    }
+    bool is_local(NodeId node) const {
+        return node >= vertex_distribution[my_rank] && node < vertex_distribution[my_rank + 1];
+    }
+
+    PEID rank(NodeId node) const {
+        auto it = std::upper_bound(vertex_distribution.begin(), vertex_distribution.end(), node);
+        return std::distance(vertex_distribution.begin(), it) - 1;
+    }
+
+    size_t get_index(NodeId node) const {
+        KASSERT(is_local(node));
+        auto idx = node - vertex_distribution[my_rank];
+        return idx;
+    }
+    template <typename NodeFunc>
+    void for_each_neighbor(NodeId node, NodeFunc&& on_neighbor) const {
+        auto begin = graph.xadj[get_index(node)];
+        auto end = graph.xadj[get_index(node) + 1];
+        for (auto edge_id = begin; edge_id < end; edge_id++) {
+            on_neighbor(graph.adjncy[edge_id]);
         }
     }
 };
@@ -78,36 +101,36 @@ struct Frontier {
     }
 };
 
-std::vector<size_t> run_sequential(const std::string& input, graphio::InputFormat format) {
-    PEID rank, size;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    if (rank != 0) {
-        return {};
-    }
-    auto G = graphio::read_graph(input, format);
-    std::vector<size_t> labels(G.first_out_.size() - 1, std::numeric_limits<size_t>::max());
-    Frontier<size_t> frontier;
-    frontier.push(0);
-    labels[0] = 0;
-    size_t level = 1;
-    frontier.flip();
-    while (!frontier.empty()) {
-        for (auto v : frontier) {
-            for (auto nb_it = G.head_.begin() + G.first_out_[v]; nb_it != G.head_.begin() + G.first_out_[v + 1];
-                 ++nb_it) {
-                auto u = *nb_it;
-                auto& label = labels[u];
-                if (label == std::numeric_limits<size_t>::max()) {
-                    label = level;
-                    frontier.push(u);
-                }
-            }
-        }
-        frontier.flip();
-        level++;
-    }
-    return labels;
-}
+// std::vector<size_t> run_sequential(const std::string& input, graphio::InputFormat format) {
+//     PEID rank, size;
+//     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+//     if (rank != 0) {
+//         return {};
+//     }
+//     auto G = graphio::read_graph(input, format);
+//     std::vector<size_t> labels(G.first_out_.size() - 1, std::numeric_limits<size_t>::max());
+//     Frontier<size_t> frontier;
+//     frontier.push(0);
+//     labels[0] = 0;
+//     size_t level = 1;
+//     frontier.flip();
+//     while (!frontier.empty()) {
+//         for (auto v : frontier) {
+//             for (auto nb_it = G.head_.begin() + G.first_out_[v]; nb_it != G.head_.begin() + G.first_out_[v + 1];
+//                  ++nb_it) {
+//                 auto u = *nb_it;
+//                 auto& label = labels[u];
+//                 if (label == std::numeric_limits<size_t>::max()) {
+//                     label = level;
+//                     frontier.push(u);
+//                 }
+//             }
+//         }
+//         frontier.flip();
+//         level++;
+//     }
+//     return labels;
+// }
 
 double run_distributed(GraphWrapper& G) {
     PEID rank, size;
@@ -119,25 +142,25 @@ double run_distributed(GraphWrapper& G) {
 
     MPI_Barrier(MPI_COMM_WORLD);
     double start = MPI_Wtime();
-    graphio::NodeId source = 0;
+    NodeId source = 0;
     // Frontier<size_t> frontier;
-    auto merge = [](std::vector<graphio::NodeId>& buffer, std::vector<graphio::NodeId> msg, int tag) {
+    auto merge = [](std::vector<NodeId>& buffer, std::vector<NodeId> msg, int tag) {
         for (auto elem : msg) {
             buffer.emplace_back(elem);
         }
         return msg.size();
     };
 
-    auto split = [](std::vector<graphio::NodeId>& buffer, auto on_message, PEID sender) {
+    auto split = [](std::vector<NodeId>& buffer, auto on_message, PEID sender) {
         for (size_t i = 0; i < buffer.size(); ++i) {
             on_message(buffer.begin() + i, buffer.begin() + i + 1, sender);
         }
     };
-    auto queue = message_queue::make_buffered_queue<graphio::NodeId>(merge, split);
-    std::deque<graphio::NodeId> frontier;
-    if (G.loc.is_local(source)) {
+    auto queue = message_queue::make_buffered_queue<NodeId>(merge, split);
+    std::deque<NodeId> frontier;
+    if (G.is_local(source)) {
         frontier.push_back(source);
-        G.labels[G.idx.get_index(source)] = 0;
+        G.labels[G.get_index(source)] = 0;
     }
     size_t level = 1;
     auto globally_empty = [&]() {
@@ -148,13 +171,13 @@ double run_distributed(GraphWrapper& G) {
     };
     while (!globally_empty()) {
         while (!frontier.empty()) {
-            graphio::NodeId v = frontier.front();
+            NodeId v = frontier.front();
             frontier.pop_front();
-            G.idx.for_each_neighbor(v, [&](graphio::NodeId u) { queue.post_message({u}, G.loc.rank(u)); });
+            G.for_each_neighbor(v, [&](NodeId u) { queue.post_message({u}, G.rank(u)); });
         }
         queue.terminate([&](auto begin, auto end, PEID sender [[maybe_unused]]) {
-            graphio::NodeId v = *begin;
-            size_t& v_label = G.labels[G.idx.get_index(v)];
+            NodeId v = *begin;
+            size_t& v_label = G.labels[G.get_index(v)];
             if (v_label == std::numeric_limits<size_t>::max()) {
                 v_label = level;
                 frontier.push_back(v);
@@ -239,9 +262,9 @@ double run_distributed_async(GraphWrapper& G, const AsyncParameters& params) {
 
     MPI_Barrier(MPI_COMM_WORLD);
     double start = MPI_Wtime();
-    graphio::NodeId source = 0;
+    NodeId source = 0;
     // Frontier<size_t> frontier;
-    auto merge = [](std::vector<graphio::NodeId>& buffer, std::vector<graphio::NodeId> msg, int tag) {
+    auto merge = [](std::vector<NodeId>& buffer, std::vector<NodeId> msg, int tag) {
         for (auto elem : msg) {
             buffer.emplace_back(elem);
         }
@@ -249,23 +272,23 @@ double run_distributed_async(GraphWrapper& G, const AsyncParameters& params) {
         // atomic_debug(buffer);
     };
 
-    auto split = [](std::vector<graphio::NodeId>& buffer, auto on_message, PEID sender) {
+    auto split = [](std::vector<NodeId>& buffer, auto on_message, PEID sender) {
         for (size_t i = 0; i < buffer.size(); i += 2) {
             on_message(buffer.cbegin() + i, buffer.cbegin() + i + 2, sender);
         }
     };
     // auto queue = message_queue::MessageQueue<graphio::NodeId>();
-    auto queue = message_queue::make_buffered_queue<graphio::NodeId>(merge, split);
-    std::deque<std::pair<graphio::NodeId, size_t>> local_queue;
+    auto queue = message_queue::make_buffered_queue<NodeId>(merge, split);
+    std::deque<std::pair<NodeId, size_t>> local_queue;
     auto on_message = [&](/*/std::vector<graphio::NodeId> message*/ auto begin, auto end,
                           PEID sender [[maybe_unused]]) {
         queue.reactivate();
-        graphio::NodeId v = *begin;
+        NodeId v = *begin;
         // graphio::NodeId v = message[0];
         std::stringstream out;
         out << "Receive " << v << " from " << sender;
         // atomic_debug(out.str());
-        assert(G.loc.is_local(v));
+        assert(G.is_local(v));
         size_t label = *(begin + 1);
         // size_t label = message[1];
         local_queue.emplace_back(v, label);
@@ -274,10 +297,10 @@ double run_distributed_async(GraphWrapper& G, const AsyncParameters& params) {
     if (!params.buffering) {
         queue.set_threshold(0);
     } else {
-        queue.set_threshold(G.graph.local_node_count());
+        queue.set_threshold(G.graph.NumberOfLocalVertices());
     }
-    if (G.loc.is_local(source)) {
-        auto msg = {source, graphio::NodeId{0}};
+    if (G.is_local(source)) {
+        auto msg = {source, NodeId{0}};
         on_message(msg.begin(), msg.end(), rank);
     } else {
         while (!queue.poll(on_message)) {
@@ -287,26 +310,26 @@ double run_distributed_async(GraphWrapper& G, const AsyncParameters& params) {
     do {
         do {
             while (!local_queue.empty()) {
-                graphio::NodeId v;
+                NodeId v;
                 size_t label;
                 std::tie(v, label) = local_queue.front();
                 local_queue.pop_front();
                 std::stringstream out;
                 out << "Pop " << v;
                 // atomic_debug(out.str());
-                assert(G.loc.is_local(v));
-                size_t& v_label = G.labels[G.idx.get_index(v)];
+                assert(G.is_local(v));
+                size_t& v_label = G.labels[G.get_index(v)];
                 if (label < v_label) {
                     std::stringstream out;
                     discovered_nodes++;
                     out << "Discovered " << v;
                     // atomic_debug(out.str());
                     v_label = label;
-                    G.idx.for_each_neighbor(v, [&](graphio::NodeId u) {
-                        if (G.loc.is_local(u)) {
+                    G.for_each_neighbor(v, [&](NodeId u) {
+                        if (G.is_local(u)) {
                             local_queue.emplace_back(u, label + 1);
                         } else {
-                            queue.post_message({u, label + 1}, G.loc.rank(u));
+                            queue.post_message({u, label + 1}, G.rank(u));
                             if (params.poll_after_post) {
                                 queue.poll(on_message);
                             }
@@ -338,7 +361,7 @@ double run_distributed_async(GraphWrapper& G, const AsyncParameters& params) {
     double end = MPI_Wtime();
 
     // queue.terminate(on_message);
-    atomic_debug(queue.stats().sent_messages.load());
+    //atomic_debug(queue.stats().sent_messages.load());
 
     // std::vector<int> counts(size);
     // std::vector<int> displs(size);
@@ -369,12 +392,10 @@ int main(int argc, char* argv[]) {
 
     CLI::App app;
 
-    graphio::GeneratorParameters gen_params;
+    // graphio::GeneratorParameters gen_params;
     std::string input;
     app.add_option("INPUT", input)->required();
-    std::string input_format = "metis";
-    app.add_option("--input_format", input_format);
-    app.add_option("--n", gen_params.n);
+    // app.add_option("--n", gen_params.n);
     size_t iterations = 1;
     app.add_option("--iterations", iterations);
     bool async = false;
@@ -414,15 +435,19 @@ int main(int argc, char* argv[]) {
     }
     // MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
 
-    graphio::LocalGraphView G_in;
-    if (input == "gnm") {
-        gen_params.m = gen_params.n + 4;
-        gen_params.generator = "gnm_undirected";
-        G_in = graphio::gen_local_graph(gen_params, rank, size).G;
-    } else {
-        G_in = graphio::read_local_graph(input, graphio::input_types.at(input_format), rank, size).G;
+    kagen::KaGen gen(MPI_COMM_WORLD);
+    gen.UseCSRRepresentation();
+    kagen::Graph G_gen;
+    try {
+        G_gen = gen.GenerateFromOptionString(input);
+    } catch (std::runtime_error e) {
+        // if (rank == 0) {
+        std::cerr << "KaGen failed with error: " << e.what() << "\n";
+        //}
+        MPI_Finalize();
+        exit(1);
     }
-    GraphWrapper G(std::move(G_in));
+    GraphWrapper G{std::move(G_gen)};
 
     auto single_config_run = [&](const AsyncParameters& params) {
         for (size_t iteration = 0; iteration < iterations + 1; iteration++) {
@@ -434,17 +459,11 @@ int main(int argc, char* argv[]) {
             }
 
             if (rank == 0) {
-                std::string input_name;
-                if (input == "gnm") {
-                    input_name = "gnm(" + std::to_string(gen_params.n) + "," + std::to_string(gen_params.m) + ")";
-                } else {
-                    input_name = std::filesystem::path(input).stem();
-                }
                 std::stringstream out;
                 if (iteration > 0) {
                     // clang-format off
                 out << "RESULT" << std::boolalpha
-                    << " input=" << input_name
+                    << " input=" << input
                     << " p=" << size
                     << " async=" << async
                     << " iteration=" << iteration
