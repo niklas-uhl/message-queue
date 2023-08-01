@@ -1,0 +1,28 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 23,
+        "patch": 0
+    },
+    "configurePresets": [{
+        "name": "default",
+        "generator": "Ninja Multi-Config",
+        "binaryDir": "${sourceDir}/build/",
+        "cacheVariables": {
+            "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+        }
+    }],
+    "buildPresets": [{
+        "name": "debug",
+        "configuration": "Debug",
+        "configurePreset": "default",
+        "jobs": 4
+    },
+    {
+        "name": "release",
+        "configuration": "Release",
+        "configurePreset": "default",
+        "jobs": 4
+    }]
+}

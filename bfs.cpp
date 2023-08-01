@@ -23,6 +23,54 @@ using message_queue::atomic_debug;
 using message_queue::PEID;
 using NodeId = kagen::SInt;
 
+// parameters {{{
+struct AsyncParameters {
+    bool buffering = false;
+    bool dynamic_buffering = false;
+    double dampening_factor = 0.5;
+    bool poll_after_post = false;
+    bool poll_after_pop = false;
+    size_t flush_level = 0;
+};
+struct AsyncParameterSet {
+    std::vector<bool> buffering;
+    std::vector<bool> dynamic_buffering;
+    std::vector<double> dampening_factor;
+    std::vector<bool> poll_after_post;
+    std::vector<bool> poll_after_pop;
+    std::vector<size_t> flush_level;
+
+    std::vector<AsyncParameters> expand() {
+        std::vector<AsyncParameters> parameter_set;
+        for (auto buffering_value : !buffering.empty() ? buffering : std::vector<bool>{false}) {
+            for (auto dynamic_buffering_value :
+                 !dynamic_buffering.empty() ? dynamic_buffering : std::vector<bool>{false}) {
+                for (auto dampening_factor_value :
+                     !dampening_factor.empty() ? dampening_factor : std::vector<double>{.5}) {
+                    for (auto poll_after_post_value :
+                         !poll_after_post.empty() ? poll_after_post : std::vector<bool>{false}) {
+                        for (auto poll_after_pop_value :
+                             !poll_after_pop.empty() ? poll_after_pop : std::vector<bool>{false}) {
+                            for (auto flush_level_value : !flush_level.empty() ? flush_level : std::vector<size_t>{0}) {
+                                AsyncParameters params;
+                                params.buffering = buffering_value;
+                                params.dynamic_buffering = dynamic_buffering_value;
+                                params.dampening_factor = dampening_factor_value;
+                                params.poll_after_post = poll_after_post_value;
+                                params.poll_after_pop = poll_after_pop_value;
+                                params.flush_level = flush_level_value;
+                                parameter_set.emplace_back(std::move(params));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return parameter_set;
+    }
+};
+// }}}
+
 struct GraphWrapper {
     GraphWrapper(kagen::Graph&& G) : graph(G), my_rank(), labels(G.NumberOfLocalVertices()), vertex_distribution() {
         for (size_t i = 0; i < labels.size(); ++i) {
@@ -70,6 +118,7 @@ struct GraphWrapper {
 
 template <class T>
 struct Frontier {
+    Frontier() : frontier(), new_frontier() {}
     std::deque<T> frontier;
     std::deque<T> new_frontier;
 
@@ -77,60 +126,38 @@ struct Frontier {
         frontier.swap(new_frontier);
         new_frontier.clear();
     }
+
     void push(T node) {
         new_frontier.push_back(node);
     }
 
-    auto begin() {
+    auto begin() const {
         return frontier.begin();
     }
 
-    auto end() {
+    T const& front() const {
+        return *begin();
+    }
+
+    void pop_front() {
+        frontier.pop_front();
+    }
+
+    auto end() const {
         return frontier.end();
     }
 
-    bool empty() {
+    bool empty() const {
         return frontier.empty();
     }
 
-    bool globally_empty() {
+    bool globally_empty() const {
         bool locally_empty = empty();
         bool globally_empty;
         MPI_Allreduce(&locally_empty, &globally_empty, 1, MPI_CXX_BOOL, MPI_LAND, MPI_COMM_WORLD);
         return globally_empty;
     }
 };
-
-// std::vector<size_t> run_sequential(const std::string& input, graphio::InputFormat format) {
-//     PEID rank, size;
-//     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-//     if (rank != 0) {
-//         return {};
-//     }
-//     auto G = graphio::read_graph(input, format);
-//     std::vector<size_t> labels(G.first_out_.size() - 1, std::numeric_limits<size_t>::max());
-//     Frontier<size_t> frontier;
-//     frontier.push(0);
-//     labels[0] = 0;
-//     size_t level = 1;
-//     frontier.flip();
-//     while (!frontier.empty()) {
-//         for (auto v : frontier) {
-//             for (auto nb_it = G.head_.begin() + G.first_out_[v]; nb_it != G.head_.begin() + G.first_out_[v + 1];
-//                  ++nb_it) {
-//                 auto u = *nb_it;
-//                 auto& label = labels[u];
-//                 if (label == std::numeric_limits<size_t>::max()) {
-//                     label = level;
-//                     frontier.push(u);
-//                 }
-//             }
-//         }
-//         frontier.flip();
-//         level++;
-//     }
-//     return labels;
-// }
 
 double run_distributed(GraphWrapper& G) {
     PEID rank, size;
@@ -157,19 +184,13 @@ double run_distributed(GraphWrapper& G) {
         }
     };
     auto queue = message_queue::make_buffered_queue<NodeId>(merge, split);
-    std::deque<NodeId> frontier;
+    Frontier<NodeId> frontier;
     if (G.is_local(source)) {
-        frontier.push_back(source);
+        frontier.push(source);
         G.labels[G.get_index(source)] = 0;
     }
     size_t level = 1;
-    auto globally_empty = [&]() {
-        bool locally_empty = frontier.empty();
-        bool globally_empty;
-        MPI_Allreduce(&locally_empty, &globally_empty, 1, MPI_CXX_BOOL, MPI_LAND, MPI_COMM_WORLD);
-        return globally_empty;
-    };
-    while (!globally_empty()) {
+    while (!frontier.globally_empty()) {
         while (!frontier.empty()) {
             NodeId v = frontier.front();
             frontier.pop_front();
@@ -180,77 +201,15 @@ double run_distributed(GraphWrapper& G) {
             size_t& v_label = G.labels[G.get_index(v)];
             if (v_label == std::numeric_limits<size_t>::max()) {
                 v_label = level;
-                frontier.push_back(v);
+                frontier.push(v);
             }
         });
         level++;
     }
     MPI_Barrier(MPI_COMM_WORLD);
     double end = MPI_Wtime();
-    // atomic_debug(level);
-    //  std::vector<int> counts(size);
-    //  std::vector<int> displs(size);
-    //  if (rank == 0) {
-    //      counts.resize(size);
-    //      displs.resize(size);
-    //  }
-    //  int local_count = G.graph.local_node_count();
-    //  MPI_Gather(&local_count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
-    //  std::vector<size_t> all_labels;
-    //  if (rank == 0) {
-    //      std::exclusive_scan(counts.begin(), counts.end(), displs.begin(), 0);
-    //      all_labels.resize(displs.back() + counts.back());
-    //  }
-    //  MPI_Gatherv(G.labels.data(), G.labels.size(), MPI_UINT64_T, all_labels.data(), counts.data(), displs.data(),
-    //              MPI_UINT64_T, 0, MPI_COMM_WORLD);
     return end - start;
 }
-
-struct AsyncParameters {
-    bool buffering = false;
-    bool dynamic_buffering = false;
-    double dampening_factor = 0.5;
-    bool poll_after_post = false;
-    bool poll_after_pop = false;
-    size_t flush_level = 0;
-};
-struct AsyncParameterSet {
-    std::vector<bool> buffering;
-    std::vector<bool> dynamic_buffering;
-    std::vector<double> dampening_factor;
-    std::vector<bool> poll_after_post;
-    std::vector<bool> poll_after_pop;
-    std::vector<size_t> flush_level;
-
-    std::vector<AsyncParameters> expand() {
-        std::vector<AsyncParameters> parameter_set;
-        for (auto buffering_value : !buffering.empty() ? buffering : std::vector<bool>{false}) {
-            for (auto dynamic_buffering_value :
-                 !dynamic_buffering.empty() ? dynamic_buffering : std::vector<bool>{false}) {
-                for (auto dampening_factor_value :
-                     !dampening_factor.empty() ? dampening_factor : std::vector<double>{.5}) {
-                    for (auto poll_after_post_value :
-                         !poll_after_post.empty() ? poll_after_post : std::vector<bool>{false}) {
-                        for (auto poll_after_pop_value :
-                             !poll_after_pop.empty() ? poll_after_pop : std::vector<bool>{false}) {
-                            for (auto flush_level_value : !flush_level.empty() ? flush_level : std::vector<size_t>{0}) {
-                                AsyncParameters params;
-                                params.buffering = buffering_value;
-                                params.dynamic_buffering = dynamic_buffering_value;
-                                params.dampening_factor = dampening_factor_value;
-                                params.poll_after_post = poll_after_post_value;
-                                params.poll_after_pop = poll_after_pop_value;
-                                params.flush_level = flush_level_value;
-                                parameter_set.emplace_back(std::move(params));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return parameter_set;
-    }
-};
 
 double run_distributed_async(GraphWrapper& G, const AsyncParameters& params) {
     PEID rank, size;
@@ -361,7 +320,7 @@ double run_distributed_async(GraphWrapper& G, const AsyncParameters& params) {
     double end = MPI_Wtime();
 
     // queue.terminate(on_message);
-    //atomic_debug(queue.stats().sent_messages.load());
+    // atomic_debug(queue.stats().sent_messages.load());
 
     // std::vector<int> counts(size);
     // std::vector<int> displs(size);
