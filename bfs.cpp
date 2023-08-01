@@ -19,7 +19,6 @@
 #include "message-queue/debug_print.h"
 #include "message-queue/queue.h"
 
-using message_queue::atomic_debug;
 using message_queue::PEID;
 using NodeId = kagen::SInt;
 
@@ -125,6 +124,7 @@ struct Frontier {
     void flip() {
         frontier.swap(new_frontier);
         new_frontier.clear();
+        //MPI_Barrier(MPI_COMM_WORLD);
     }
 
     void push(T node) {
@@ -163,9 +163,7 @@ double run_distributed(GraphWrapper& G) {
     PEID rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
-    // MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
-
-    // DEBUG_BARRIER(rank);
+    DEBUG_BARRIER(rank);
 
     MPI_Barrier(MPI_COMM_WORLD);
     double start = MPI_Wtime();
@@ -188,6 +186,7 @@ double run_distributed(GraphWrapper& G) {
     if (G.is_local(source)) {
         frontier.push(source);
         G.labels[G.get_index(source)] = 0;
+        frontier.flip();
     }
     size_t level = 1;
     while (!frontier.globally_empty()) {
@@ -205,6 +204,7 @@ double run_distributed(GraphWrapper& G) {
             }
         });
         level++;
+        frontier.flip();
     }
     MPI_Barrier(MPI_COMM_WORLD);
     double end = MPI_Wtime();
@@ -239,7 +239,7 @@ double run_distributed_async(GraphWrapper& G, const AsyncParameters& params) {
     // auto queue = message_queue::MessageQueue<graphio::NodeId>();
     auto queue = message_queue::make_buffered_queue<NodeId>(merge, split);
     std::deque<std::pair<NodeId, size_t>> local_queue;
-    auto on_message = [&](/*/std::vector<graphio::NodeId> message*/ auto begin, auto end,
+    auto on_message = [&](auto begin, auto end,
                           PEID sender [[maybe_unused]]) {
         queue.reactivate();
         NodeId v = *begin;
@@ -247,7 +247,7 @@ double run_distributed_async(GraphWrapper& G, const AsyncParameters& params) {
         std::stringstream out;
         out << "Receive " << v << " from " << sender;
         // atomic_debug(out.str());
-        assert(G.is_local(v));
+        KASSERT(G.is_local(v));
         size_t label = *(begin + 1);
         // size_t label = message[1];
         local_queue.emplace_back(v, label);
@@ -276,7 +276,7 @@ double run_distributed_async(GraphWrapper& G, const AsyncParameters& params) {
                 std::stringstream out;
                 out << "Pop " << v;
                 // atomic_debug(out.str());
-                assert(G.is_local(v));
+                KASSERT(G.is_local(v));
                 size_t& v_label = G.labels[G.get_index(v)];
                 if (label < v_label) {
                     std::stringstream out;
@@ -318,26 +318,6 @@ double run_distributed_async(GraphWrapper& G, const AsyncParameters& params) {
     } while (!queue.try_terminate(on_message));
     MPI_Barrier(MPI_COMM_WORLD);
     double end = MPI_Wtime();
-
-    // queue.terminate(on_message);
-    // atomic_debug(queue.stats().sent_messages.load());
-
-    // std::vector<int> counts(size);
-    // std::vector<int> displs(size);
-    // if (rank == 0) {
-    //     counts.resize(size);
-    //     displs.resize(size);
-    // }
-    // int local_count = G.graph.local_node_count();
-    // MPI_Gather(&local_count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
-    // std::vector<size_t> all_labels;
-    // if (rank == 0) {
-    //     std::exclusive_scan(counts.begin(), counts.end(), displs.begin(), 0);
-    //     all_labels.resize(displs.back() + counts.back());
-    // }
-    // MPI_Gatherv(G.labels.data(), G.labels.size(), MPI_UINT64_T, all_labels.data(), counts.data(), displs.data(),
-    //             MPI_UINT64_T, 0, MPI_COMM_WORLD);
-    // return all_labels;
     return end - start;
 }
 
@@ -396,6 +376,8 @@ int main(int argc, char* argv[]) {
 
     kagen::KaGen gen(MPI_COMM_WORLD);
     gen.UseCSRRepresentation();
+    gen.EnableOutput(true);
+    gen.EnableBasicStatistics();
     kagen::Graph G_gen;
     try {
         G_gen = gen.GenerateFromOptionString(input);
@@ -416,7 +398,9 @@ int main(int argc, char* argv[]) {
             } else {
                 time = run_distributed(G);
             }
-
+            size_t max_label = *std::max_element(G.labels.begin(), G.labels.end());
+            size_t global_max_label;
+            MPI_Reduce(&max_label, &global_max_label, 1, MPI_UINT64_T, MPI_MAX, 0, MPI_COMM_WORLD);
             if (rank == 0) {
                 std::stringstream out;
                 if (iteration > 0) {
@@ -433,6 +417,7 @@ int main(int argc, char* argv[]) {
                     << " poll_after_post=" << params.poll_after_post
                     << " poll_after_pop=" << params.poll_after_pop
                     << " flush_level=" << params.flush_level
+                    << " max_level=" << global_max_label
                     << std::endl;
                 std::cout << out.str();
                     // clang-format on

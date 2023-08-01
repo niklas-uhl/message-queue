@@ -70,7 +70,7 @@ if(MESSAGE_QUEUE_MATCHED_RECV)
   target_compile_definitions(message-queue INTERFACE MESSAGE_QUEUE_MATCHED_RECV)
 endif()
 add_executable(example example.cpp)
-target_link_libraries(example message-queue)
+target_link_libraries(example PUBLIC message-queue)
 
 # add_executable(asynchronous asynchronous.cpp)
 # target_link_libraries(asynchronous MPI::MPI_CXX)

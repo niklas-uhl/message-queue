@@ -5,7 +5,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include "message-queue/debug_print.h"
-#include "message-queue/queue.h"
+#include "message-queue/queue_v2.h"
 
 namespace message_queue {
 
@@ -131,7 +131,7 @@ public:
     }
 
 private:
-    MessageQueue<T> queue_;
+    MessageQueueV2<T> queue_;
     std::unordered_map<PEID, std::vector<T>> buffers_;
     size_t buffer_ocupacy_;
     size_t threshold_;
