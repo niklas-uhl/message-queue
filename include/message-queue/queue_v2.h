@@ -1,11 +1,14 @@
 #pragma once
 
+#include <fmt/core.h>
+#include <fmt/ranges.h>
 #include <mpi.h>
 #include <atomic>
 #include <boost/circular_buffer.hpp>
 #include <boost/mpi/datatype.hpp>
 #include <cstddef>
 #include <deque>
+#include <kassert/kassert.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -21,7 +24,8 @@
 namespace message_queue {
 class RequestPool {
 public:
-    RequestPool(std::size_t capacity = 0) : requests(capacity), indices(capacity), inactive_request_indices(capacity) {
+    RequestPool(std::size_t capacity = 0)
+        : requests(capacity, MPI_REQUEST_NULL), indices(capacity), inactive_request_indices(capacity) {
         for (int i = 0; i < capacity; i++) {
             inactive_request_indices.push_back(i);
         }
@@ -33,6 +37,7 @@ public:
         }
         int index = inactive_request_indices.front();
         inactive_request_indices.pop_front();
+        // atomic_debug(fmt::format("using request {}", index));
         return {{index, &requests[index]}};
     }
 
@@ -48,12 +53,15 @@ public:
     template <typename CompletionFunction>
     void test_some(CompletionFunction&& on_complete = [](int) {}) {
         int outcount;
+        // std::for_each(requests.begin(), requests.end(), [](auto& req) { req = MPI_REQUEST_NULL; });
         MPI_Testsome(static_cast<int>(requests.size()), requests.data(), &outcount, indices.data(),
                      MPI_STATUSES_IGNORE);
+        // atomic_debug(fmt::format("calling testsome, {} finished", outcount));
         if (outcount != MPI_UNDEFINED) {
             // std::copy_n(indices.begin(), outcount, std::back_inserter(inactive_request_indices));
             std::for_each_n(indices.begin(), outcount, [&](int index) {
                 inactive_request_indices.push_back(index);
+                // atomic_debug(fmt::format("completed request {}", index));
                 on_complete(index);
             });
         }
@@ -108,9 +116,8 @@ class MessageQueueV2 {
         void initiate_send() {
             // atomic_debug(this->request_id);
             int err = MPI_Isend(this->message.data(), this->message.size(), boost::mpi::get_mpi_datatype<S>(), receiver,
-                                this->tag, MPI_COMM_WORLD, &this->request);
+                                this->tag, MPI_COMM_WORLD, this->request);
             check_mpi_error(err, __FILE__, __LINE__);
-            this->state = State::initiated;
         }
     };
 
@@ -195,12 +202,18 @@ class MessageQueueV2 {
     }
 
     bool try_send_something() {
+        if (outgoing_message_box.empty()) {
+            return false;
+        }
         if (auto result = request_pool.get_some_inactive_request()) {
             SendHandle<T> message_to_send = std::move(outgoing_message_box.front());
             outgoing_message_box.pop_front();
             auto [index, req_ptr] = *result;
             message_to_send.request = req_ptr;
+            // atomic_debug(fmt::format("isend msg={}, to {}", message_to_send.message, message_to_send.receiver));
             in_transit_messages[index] = std::move(message_to_send);
+            in_transit_messages[index].initiate_send();
+            KASSERT(*message_to_send.request != MPI_REQUEST_NULL);
             return true;
         }
         return false;
@@ -223,6 +236,7 @@ public:
     }
 
     void post_message(std::vector<T>&& message, PEID receiver, int tag = 0) {
+        // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));
         // assert(receiver != rank_);
         if (message.empty()) {
             return;
@@ -247,18 +261,22 @@ public:
         });
         while (try_send_something()) {
         }
-        while (auto handle = probe()) {
+        while (auto probe_result = probe()) {
             something_happenend = true;
-            messages_to_receive.emplace_back(handle->template handle<T>());
-        }
-        receive_requests.resize(messages_to_receive.size());
-        auto req = receive_requests.begin();
-        for (auto& handle : messages_to_receive) {
-            handle.request = &*req++;
-            handle.start_receive();
+            auto recv_handle = probe_result->template handle<T>();
+            // atomic_debug(fmt::format("probed msg from {}", recv_handle.sender));
+            MPI_Request recv_req;
+            recv_handle.request = &recv_req;
+            recv_handle.start_receive();
+            receive_requests.push_back(recv_req);
+            messages_to_receive.emplace_back(std::move(recv_handle));
         }
         MPI_Waitall(static_cast<int>(receive_requests.size()), receive_requests.data(), MPI_STATUSES_IGNORE);
+        receive_requests.clear();
         for (auto& handle : messages_to_receive) {
+            // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
+            stats_.received_messages.fetch_add(1, std::memory_order_relaxed);
+            stats_.receive_volume.fetch_add(handle.message.size(), std::memory_order_relaxed);
             on_message(std::move(handle.message), handle.sender);
         }
         messages_to_receive.clear();
