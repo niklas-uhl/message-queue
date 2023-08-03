@@ -7,7 +7,7 @@ option(MESSAGE_QUEUE_BACKTRACE "Enable stacktraces" ON)
 message(STATUS BLOCKING_RECEIVE ${MESSAGE_QUEUE_BLOCKING_RECEIVE})
 
 find_package(MPI REQUIRED)
-find_package(Boost REQUIRED COMPONENTS mpi)
+find_package(Boost COMPONENTS mpi)
 
 # set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer
 # -fsanitize=address ") set (CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS}
@@ -52,6 +52,15 @@ if(sanitizers-cmake_ADDED)
 endif()
 find_package(Sanitizers)
 
+if(NOT Boost_FOUND)
+  message(
+    STATUS
+      "Boost not found locally, downloading it. This may take several minutes.")
+  set(BOOST_ENABLE_MPI ON)
+  set(BOOST_INCLUDE_LIBRARIES mpi)
+  cpmaddpackage("gh:boostorg/boost#boost-1.82.0")
+endif()
+
 #
 # set(GRAPH_IO_GENERATORS OFF) add_subdirectory(extern/graph-io)
 
@@ -70,7 +79,8 @@ if(MESSAGE_QUEUE_MATCHED_RECV)
   target_compile_definitions(message-queue INTERFACE MESSAGE_QUEUE_MATCHED_RECV)
 endif()
 add_executable(example example.cpp)
-target_link_libraries(example PUBLIC message-queue fmt::fmt kassert::kassert CLI11::CLI11)
+target_link_libraries(example PUBLIC message-queue fmt::fmt kassert::kassert
+                                     CLI11::CLI11)
 
 # add_executable(asynchronous asynchronous.cpp)
 # target_link_libraries(asynchronous MPI::MPI_CXX)
