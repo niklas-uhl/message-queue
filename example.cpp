@@ -106,9 +106,11 @@ int main(int argc, char* argv[]) {
         });
         MPI_Barrier(MPI_COMM_WORLD);
         double end = MPI_Wtime();
+        double max_wait_all_time;
+        MPI_Reduce(&wait_all_time, &max_wait_all_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
         if (rank == 0) {
             std::cout << "RESULT version=" << queue_version << " ranks=" << size << " time=" << end - start
-                      << " iteration=" << i << " wait_all_time=" << wait_all_time << " test_any=" << use_test_any
+                      << " iteration=" << i << " wait_all_time=" << max_wait_all_time << " test_any=" << use_test_any
                       << "\n";
         }
     }
