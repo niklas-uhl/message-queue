@@ -45,7 +45,6 @@ int main(int argc, char* argv[]) {
     DEBUG_BARRIER(rank);
     const int message_size = 10;
 
-
     auto merger = [](std::vector<int>& buffer, std::vector<int> msg, int) {
         for (auto elem : msg) {
             buffer.emplace_back(elem);
@@ -60,7 +59,8 @@ int main(int argc, char* argv[]) {
     for (size_t i = 0; i < iterations; i++) {
         MPI_Barrier(MPI_COMM_WORLD);
         double start = MPI_Wtime();
-        with_queue(queue_version, [&] (auto& queue){
+        double wait_all_time = 0;
+        with_queue(queue_version, [&](auto& queue) {
             std::default_random_engine eng;
             eng.seed(rank);
             std::bernoulli_distribution bernoulli_dist(0.0001);
@@ -79,7 +79,8 @@ int main(int argc, char* argv[]) {
                 if (bernoulli_dist(eng)) {
                     auto begin = msg.begin();
                     std::stringstream ss;
-                    ss << "Message " << *(begin + 2) << " from " << *begin << " arrived after " << *(begin + 1) << " hops.";
+                    ss << "Message " << *(begin + 2) << " from " << *begin << " arrived after " << *(begin + 1)
+                       << " hops.";
                     message_queue::atomic_debug(ss.str());
                 } else {
                     KASSERT(msg.size() > 1);
@@ -89,14 +90,15 @@ int main(int argc, char* argv[]) {
             };
             queue.poll(on_message);
             queue.terminate(on_message);
+            if constexpr (std::is_same_v<std::remove_reference_t<decltype(queue)>, message_queue::MessageQueueV2<int>>) {
+                wait_all_time = queue.wait_all_time().count();
+            }
         });
         MPI_Barrier(MPI_COMM_WORLD);
         double end = MPI_Wtime();
         if (rank == 0) {
-            std::cout << "RESULT version=" << queue_version
-                      << " ranks=" << size
-                      << " time=" << end-start
-                      << " iteration=" << i << "\n";
+            std::cout << "RESULT version=" << queue_version << " ranks=" << size << " time=" << end - start
+                      << " iteration=" << i << " wait_all_time=" << wait_all_time << "\n";
         }
     }
     // message_queue::atomic_debug(queue.overflows());

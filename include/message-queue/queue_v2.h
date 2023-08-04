@@ -6,6 +6,7 @@
 #include <atomic>
 #include <boost/circular_buffer.hpp>
 #include <boost/mpi/datatype.hpp>
+#include <chrono>
 #include <cstddef>
 #include <deque>
 #include <kassert/kassert.hpp>
@@ -271,7 +272,10 @@ public:
             receive_requests.push_back(recv_req);
             messages_to_receive.emplace_back(std::move(recv_handle));
         }
+        auto begin = std::chrono::high_resolution_clock::now();
         MPI_Waitall(static_cast<int>(receive_requests.size()), receive_requests.data(), MPI_STATUSES_IGNORE);
+        auto end = std::chrono::high_resolution_clock::now();
+        wait_all_time_ += (end - begin);
         receive_requests.clear();
         for (auto& handle : messages_to_receive) {
             // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
@@ -401,6 +405,10 @@ public:
         }
     }
 
+    auto wait_all_time() const {
+        return wait_all_time_;
+    }
+
 private:
     enum class TerminationState { active, trying_termination, terminated };
     std::deque<SendHandle<T>> outgoing_message_box;
@@ -418,6 +426,7 @@ private:
     size_t request_id_;
     PEID rank_;
     PEID size_;
+    std::chrono::high_resolution_clock::duration wait_all_time_;
     TerminationState termination_state = TerminationState::active;
     size_t number_of_waves = 0;
 };
