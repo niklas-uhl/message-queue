@@ -1,6 +1,6 @@
 #!/bin/bash
 
-tasks_per_node=48
+tasks_per_node=76
 
 if [[ -z ${SUPERMUC_OUTPUT_DIR+x}
           || -z ${SUPERMUC_ACCOUNT+x} ]]; then
@@ -47,11 +47,16 @@ function sbatch_preamble() {
     #echo \#SBATCH --get-user-env
     #echo \#SBATCH --account=${SUPERMUC_ACCOUNT}
     echo
-    echo module load slurm_setup
+    echo module r message-queue
     echo
 }
 
 function mpi_exec_call() {
-    echo mpirun --bind-to core --map-by core -report-bindings
+    if [[ -z ${I_MPI_ROOT+x} ]]; then
+        echo mpirun --bind-to core --map-by core
+        #-report-bindings
+    else
+        echo mpiexec.hydra --bootstrap slurm
+    fi
 }
 

@@ -177,6 +177,7 @@ public:
     MessageQueue() : send_handles_(), recv_handles_(), stats_(), request_id_(0), rank_(0), size_(0) {
         MPI_Comm_rank(MPI_COMM_WORLD, &rank_);
         MPI_Comm_size(MPI_COMM_WORLD, &size_);
+        max_messages_in_transit_ = static_cast<size_t>(size_);
     }
 
     void post_message(std::vector<T>&& message, PEID receiver, int tag = 0) {
@@ -399,7 +400,7 @@ private:
     TerminationState termination_state = TerminationState::active;
     size_t number_of_waves = 0;
     size_t messages_in_transit_ = 0;
-    size_t static const max_messages_in_transit_ = 10;
+    size_t max_messages_in_transit_ = 10;
 };
 
 }  // namespace message_queue
