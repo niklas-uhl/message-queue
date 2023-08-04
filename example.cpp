@@ -25,6 +25,9 @@ void with_queue(int version, Functor&& func) {
     }
 }
 
+template <typename T>
+static constexpr bool is_queue_v2_v = std::is_same_v<std::remove_reference_t<T>, message_queue::MessageQueueV2<int>>;
+
 int main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
     // PMPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
@@ -39,6 +42,8 @@ int main(int argc, char* argv[]) {
     app.add_option("--number_of_messages", number_of_messages, "The number of messages to send from each PE");
     std::size_t iterations = 1;
     app.add_option("--iterations", iterations);
+    bool use_test_any = false;
+    app.add_flag("--use_test_any", use_test_any);
 
     CLI11_PARSE(app, argc, argv);
 
@@ -61,6 +66,11 @@ int main(int argc, char* argv[]) {
         double start = MPI_Wtime();
         double wait_all_time = 0;
         with_queue(queue_version, [&](auto& queue) {
+            if constexpr (is_queue_v2_v<decltype(queue)>) {
+                if (use_test_any) {
+                    queue.use_test_any();
+                }
+            }
             std::default_random_engine eng;
             eng.seed(rank);
             std::bernoulli_distribution bernoulli_dist(0.0001);
@@ -90,7 +100,7 @@ int main(int argc, char* argv[]) {
             };
             queue.poll(on_message);
             queue.terminate(on_message);
-            if constexpr (std::is_same_v<std::remove_reference_t<decltype(queue)>, message_queue::MessageQueueV2<int>>) {
+            if constexpr (is_queue_v2_v<decltype(queue)>) {
                 wait_all_time = queue.wait_all_time().count();
             }
         });
@@ -98,7 +108,8 @@ int main(int argc, char* argv[]) {
         double end = MPI_Wtime();
         if (rank == 0) {
             std::cout << "RESULT version=" << queue_version << " ranks=" << size << " time=" << end - start
-                      << " iteration=" << i << " wait_all_time=" << wait_all_time << "\n";
+                      << " iteration=" << i << " wait_all_time=" << wait_all_time << " test_any=" << use_test_any
+                      << "\n";
         }
     }
     // message_queue::atomic_debug(queue.overflows());

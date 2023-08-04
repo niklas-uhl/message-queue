@@ -42,15 +42,6 @@ public:
         return {{index, &requests[index]}};
     }
 
-    void wait_some() {
-        int outcount;
-        MPI_Waitsome(static_cast<int>(requests.size()), requests.data(), &outcount, indices.data(),
-                     MPI_STATUSES_IGNORE);
-        if (outcount != MPI_UNDEFINED) {
-            std::copy_n(indices.begin(), outcount, std::back_inserter(inactive_request_indices));
-        }
-    }
-
     template <typename CompletionFunction>
     void test_some(CompletionFunction&& on_complete = [](int) {}) {
         int outcount;
@@ -65,6 +56,20 @@ public:
                 // atomic_debug(fmt::format("completed request {}", index));
                 on_complete(index);
             });
+        }
+    }
+
+    template <typename CompletionFunction>
+    void test_any(CompletionFunction&& on_complete = [](int) {}) {
+        // std::for_each(requests.begin(), requests.end(), [](auto& req) { req = MPI_REQUEST_NULL; });
+        int flag;
+        int index;
+        MPI_Testany(static_cast<int>(requests.size()), requests.data(), &index, &flag, MPI_STATUS_IGNORE);
+        // atomic_debug(fmt::format("calling testsome, {} finished", outcount));
+        if (flag && index != MPI_UNDEFINED) {
+            // std::copy_n(indices.begin(), outcount, std::back_inserter(inactive_request_indices));
+            inactive_request_indices.push_back(index);
+            on_complete(index);
         }
     }
 
@@ -256,11 +261,24 @@ public:
         static_assert(std::is_invocable_v<MessageHandler, std::vector<T>, PEID>);
         bool something_happenend = false;
         size_t i = 0;
-        request_pool.test_some([&](int completed_request_index) {
-            in_transit_messages[completed_request_index] = {};
-            something_happenend = true;
-        });
-        while (try_send_something()) {
+        if (!use_test_any_) {
+            request_pool.test_some([&](int completed_request_index) {
+                in_transit_messages[completed_request_index] = {};
+                something_happenend = true;
+            });
+            while (try_send_something()) {
+            }
+        } else {
+            bool progress = true;
+            while (progress) {
+                progress = false;
+                request_pool.test_any([&](int completed_request_index) {
+                    in_transit_messages[completed_request_index] = {};
+                    something_happenend = true;
+                    progress = true;
+                    try_send_something();
+                });
+            }
         }
         while (auto probe_result = probe()) {
             something_happenend = true;
@@ -409,6 +427,10 @@ public:
         return wait_all_time_;
     }
 
+    void use_test_any(bool use_it = true) {
+        use_test_any_ = use_it;
+    }
+
 private:
     enum class TerminationState { active, trying_termination, terminated };
     std::deque<SendHandle<T>> outgoing_message_box;
@@ -429,6 +451,7 @@ private:
     std::chrono::high_resolution_clock::duration wait_all_time_;
     TerminationState termination_state = TerminationState::active;
     size_t number_of_waves = 0;
+    bool use_test_any_ = false;
 };
 
 }  // namespace message_queue
