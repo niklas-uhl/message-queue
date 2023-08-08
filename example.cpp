@@ -65,6 +65,9 @@ int main(int argc, char* argv[]) {
         MPI_Barrier(MPI_COMM_WORLD);
         double start = MPI_Wtime();
         double wait_all_time = 0;
+        double test_some_time = 0;
+        double test_any_time = 0;
+        double test_time = 0;
         with_queue(queue_version, [&](auto& queue) {
             if constexpr (is_queue_v2_v<decltype(queue)>) {
                 if (use_test_any) {
@@ -102,16 +105,21 @@ int main(int argc, char* argv[]) {
             queue.terminate(on_message);
             if constexpr (is_queue_v2_v<decltype(queue)>) {
                 wait_all_time = queue.wait_all_time().count();
+                test_some_time = queue.test_some_time().count();
+                test_any_time = queue.test_any_time().count();
+                test_time = queue.test_time().count();
             }
         });
         MPI_Barrier(MPI_COMM_WORLD);
         double end = MPI_Wtime();
-        double max_wait_all_time;
-        MPI_Reduce(&wait_all_time, &max_wait_all_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+        double local_times[4] = {wait_all_time, test_some_time, test_any_time, test_time};
+        double max_times[4];
+        MPI_Reduce(&local_times, &max_times, 4, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
         if (rank == 0) {
             std::cout << "RESULT version=" << queue_version << " ranks=" << size << " time=" << end - start
-                      << " iteration=" << i << " wait_all_time=" << max_wait_all_time << " test_any=" << use_test_any
-                      << "\n";
+                      << " iteration=" << i << " test_any=" << use_test_any << " wait_all_time=" << max_times[0]
+                      << " test_some_time=" << max_times[1] << " test_any_time=" << max_times[2]
+                      << " test_time=" << max_times[3] << "\n";
         }
     }
     // message_queue::atomic_debug(queue.overflows());

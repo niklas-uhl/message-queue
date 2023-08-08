@@ -262,22 +262,28 @@ public:
         bool something_happenend = false;
         size_t i = 0;
         if (!use_test_any_) {
+            auto start = std::chrono::high_resolution_clock::now();
             request_pool.test_some([&](int completed_request_index) {
                 in_transit_messages[completed_request_index] = {};
                 something_happenend = true;
             });
+            auto end = std::chrono::high_resolution_clock::now();
+            test_some_time_ += (end - start);
             while (try_send_something()) {
             }
         } else {
             bool progress = true;
             while (progress) {
                 progress = false;
+                auto start = std::chrono::high_resolution_clock::now();
                 request_pool.test_any([&](int completed_request_index) {
                     in_transit_messages[completed_request_index] = {};
                     something_happenend = true;
                     progress = true;
                     try_send_something();
                 });
+                auto end = std::chrono::high_resolution_clock::now();
+                test_any_time_ += (end - start);
             }
         }
         while (auto probe_result = probe()) {
@@ -427,6 +433,22 @@ public:
         return wait_all_time_;
     }
 
+    auto test_some_time() const {
+        return test_some_time_;
+    }
+
+    auto test_any_time() const {
+        return test_any_time_;
+    }
+
+    auto test_time() const {
+        if (use_test_any_) {
+            return test_any_time();
+        } else {
+            return test_some_time();
+        }
+    }
+
     void use_test_any(bool use_it = true) {
         use_test_any_ = use_it;
     }
@@ -449,6 +471,8 @@ private:
     PEID rank_;
     PEID size_;
     std::chrono::high_resolution_clock::duration wait_all_time_;
+    std::chrono::high_resolution_clock::duration test_some_time_;
+    std::chrono::high_resolution_clock::duration test_any_time_;
     TerminationState termination_state = TerminationState::active;
     size_t number_of_waves = 0;
     bool use_test_any_ = false;
