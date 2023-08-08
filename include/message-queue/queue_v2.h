@@ -44,6 +44,9 @@ public:
 
     template <typename CompletionFunction>
     void test_some(CompletionFunction&& on_complete = [](int) {}) {
+#ifdef MESSAG_QUEUE_USE_MY_TEST_FUNCTIONS
+        my_test_some(on_complete);
+#else
         int outcount;
         // std::for_each(requests.begin(), requests.end(), [](auto& req) { req = MPI_REQUEST_NULL; });
         MPI_Testsome(static_cast<int>(requests.size()), requests.data(), &outcount, indices.data(),
@@ -57,10 +60,29 @@ public:
                 on_complete(index);
             });
         }
+#endif
+    }
+
+    template <typename CompletionFunction>
+    void my_test_some(CompletionFunction&& on_complete = [](int) {}) {
+        for (int i = 0; i < requests.size(); i++) {
+            if (requests[i] == MPI_REQUEST_NULL) {
+                continue;
+            }
+            int flag;
+            MPI_Test(&requests[i], &flag, MPI_STATUS_IGNORE);
+            if (flag) {
+                inactive_request_indices.push_back(i);
+                on_complete(index);
+            }
+        }
     }
 
     template <typename CompletionFunction>
     void test_any(CompletionFunction&& on_complete = [](int) {}) {
+#ifdef MESSAG_QUEUE_USE_MY_TEST_FUNCTIONS
+        my_test_any(on_complete);
+#else
         // std::for_each(requests.begin(), requests.end(), [](auto& req) { req = MPI_REQUEST_NULL; });
         int flag;
         int index;
@@ -70,6 +92,23 @@ public:
             // std::copy_n(indices.begin(), outcount, std::back_inserter(inactive_request_indices));
             inactive_request_indices.push_back(index);
             on_complete(index);
+        }
+#endif
+    }
+
+    template <typename CompletionFunction>
+    void my_test_any(CompletionFunction&& on_complete = [](int) {}) {
+        for (int i = 0; i < requests.size(); i++) {
+            if (requests[i] == MPI_REQUEST_NULL) {
+                continue;
+            }
+            int flag;
+            MPI_Test(&requests[i], &flag, MPI_STATUS_IGNORE);
+            if (flag) {
+                inactive_request_indices.push_back(i);
+                on_complete(i);
+                return;
+            }
         }
     }
 
