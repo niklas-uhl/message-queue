@@ -38,67 +38,52 @@ public:
         }
         int index = inactive_request_indices.front();
         inactive_request_indices.pop_front();
-        // atomic_debug(fmt::format("using request {}", index));
+
+        // keep track of the range of indices that are in use
+        if (index < active_range.first) {
+            active_range.first = index;
+        }
+        if (index + 1 > active_range.second) {
+            active_range.second = index + 1;
+        }
         return {{index, &requests[index]}};
     }
 
     template <typename CompletionFunction>
     void test_some(CompletionFunction&& on_complete = [](int) {}) {
-#ifdef MESSAG_QUEUE_USE_MY_TEST_FUNCTIONS
-        my_test_some(on_complete);
-#else
         int outcount;
-        // std::for_each(requests.begin(), requests.end(), [](auto& req) { req = MPI_REQUEST_NULL; });
-        MPI_Testsome(static_cast<int>(requests.size()), requests.data(), &outcount, indices.data(),
-                     MPI_STATUSES_IGNORE);
-        // atomic_debug(fmt::format("calling testsome, {} finished", outcount));
+        MPI_Testsome(active_range.second - active_range.first, requests.data() + active_range.first, &outcount,
+                     indices.data(), MPI_STATUSES_IGNORE);
         if (outcount != MPI_UNDEFINED) {
-            // std::copy_n(indices.begin(), outcount, std::back_inserter(inactive_request_indices));
+            auto index_offset = active_range.first;
             std::for_each_n(indices.begin(), outcount, [&](int index) {
+                // map index to the global index
+                index += index_offset;
                 inactive_request_indices.push_back(index);
-                // atomic_debug(fmt::format("completed request {}", index));
+                remove_from_active_range(index);
                 on_complete(index);
             });
-        }
-#endif
-    }
-
-    template <typename CompletionFunction>
-    void my_test_some(CompletionFunction&& on_complete = [](int) {}) {
-        for (int i = 0; i < requests.size(); i++) {
-            if (requests[i] == MPI_REQUEST_NULL) {
-                continue;
-            }
-            int flag;
-            MPI_Test(&requests[i], &flag, MPI_STATUS_IGNORE);
-            if (flag) {
-                inactive_request_indices.push_back(i);
-                on_complete(index);
-            }
         }
     }
 
     template <typename CompletionFunction>
     void test_any(CompletionFunction&& on_complete = [](int) {}) {
-#ifdef MESSAG_QUEUE_USE_MY_TEST_FUNCTIONS
-        my_test_any(on_complete);
-#else
-        // std::for_each(requests.begin(), requests.end(), [](auto& req) { req = MPI_REQUEST_NULL; });
         int flag;
         int index;
-        MPI_Testany(static_cast<int>(requests.size()), requests.data(), &index, &flag, MPI_STATUS_IGNORE);
-        // atomic_debug(fmt::format("calling testsome, {} finished", outcount));
+        MPI_Testany(active_range.second - active_range.first, requests.data() + active_range.first, &index, &flag,
+                    MPI_STATUS_IGNORE);
         if (flag && index != MPI_UNDEFINED) {
-            // std::copy_n(indices.begin(), outcount, std::back_inserter(inactive_request_indices));
+            index += active_range.first;
             inactive_request_indices.push_back(index);
+            remove_from_active_range(index);
             on_complete(index);
         }
-#endif
     }
 
+    /// my request functions {{{
     template <typename CompletionFunction>
     void my_test_any(CompletionFunction&& on_complete = [](int) {}) {
-        for (int i = 0; i < requests.size(); i++) {
+        for (int i = active_range.first; i < active_range.second; i++) {
             if (requests[i] == MPI_REQUEST_NULL) {
                 continue;
             }
@@ -106,20 +91,49 @@ public:
             MPI_Test(&requests[i], &flag, MPI_STATUS_IGNORE);
             if (flag) {
                 inactive_request_indices.push_back(i);
+                remove_from_active_range(i);
                 on_complete(i);
                 return;
             }
         }
     }
 
+    template <typename CompletionFunction>
+    void my_test_some(CompletionFunction&& on_complete = [](int) {}) {
+        for (int i = active_range.first; i < active_range.second; i++) {
+            if (requests[i] == MPI_REQUEST_NULL) {
+                continue;
+            }
+            int flag;
+            MPI_Test(&requests[i], &flag, MPI_STATUS_IGNORE);
+            if (flag) {
+                inactive_request_indices.push_back(i);
+                remove_from_active_range(i);
+                on_complete(i);
+            }
+        }
+    }
+
+    /// }}}
+
     std::size_t capacity() const {
         return requests.size();
     }
 
 private:
+    void remove_from_active_range(int index) {
+        if (index == active_range.first) {
+            active_range.first++;
+        } else {
+            if (index + 1 == active_range.second) {
+                active_range.second--;
+            }
+        }
+    }
     std::vector<MPI_Request> requests;
     std::vector<int> indices;
     boost::circular_buffer<int> inactive_request_indices;
+    std::pair<int, int> active_range = {0, 0};
 };
 
 template <typename T>
@@ -302,10 +316,17 @@ public:
         size_t i = 0;
         if (!use_test_any_) {
             auto start = std::chrono::high_resolution_clock::now();
-            request_pool.test_some([&](int completed_request_index) {
-                in_transit_messages[completed_request_index] = {};
-                something_happenend = true;
-            });
+            if (!use_custom_implementation_) {
+                request_pool.test_some([&](int completed_request_index) {
+                    in_transit_messages[completed_request_index] = {};
+                    something_happenend = true;
+                });
+            } else {
+                request_pool.my_test_some([&](int completed_request_index) {
+                    in_transit_messages[completed_request_index] = {};
+                    something_happenend = true;
+                });
+            }
             auto end = std::chrono::high_resolution_clock::now();
             test_some_time_ += (end - start);
             while (try_send_something()) {
@@ -315,12 +336,21 @@ public:
             while (progress) {
                 progress = false;
                 auto start = std::chrono::high_resolution_clock::now();
-                request_pool.test_any([&](int completed_request_index) {
-                    in_transit_messages[completed_request_index] = {};
-                    something_happenend = true;
-                    progress = true;
-                    try_send_something();
-                });
+                if (!use_custom_implementation_) {
+                    request_pool.test_any([&](int completed_request_index) {
+                        in_transit_messages[completed_request_index] = {};
+                        something_happenend = true;
+                        progress = true;
+                        try_send_something();
+                    });
+                } else {
+                    request_pool.my_test_any([&](int completed_request_index) {
+                        in_transit_messages[completed_request_index] = {};
+                        something_happenend = true;
+                        progress = true;
+                        try_send_something();
+                    });
+                }
                 auto end = std::chrono::high_resolution_clock::now();
                 test_any_time_ += (end - start);
             }
@@ -492,6 +522,10 @@ public:
         use_test_any_ = use_it;
     }
 
+    void use_custom_implementation(bool use_it = true) {
+        use_custom_implementation_ = use_it;
+    }
+
 private:
     enum class TerminationState { active, trying_termination, terminated };
     std::deque<SendHandle<T>> outgoing_message_box;
@@ -515,6 +549,7 @@ private:
     TerminationState termination_state = TerminationState::active;
     size_t number_of_waves = 0;
     bool use_test_any_ = false;
+    bool use_custom_implementation_ = false;
 };
 
 }  // namespace message_queue

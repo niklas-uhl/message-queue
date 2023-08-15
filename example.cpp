@@ -44,6 +44,8 @@ int main(int argc, char* argv[]) {
     app.add_option("--iterations", iterations);
     bool use_test_any = false;
     app.add_flag("--use_test_any", use_test_any);
+    bool use_custom_implementations = false;
+    app.add_flag("--use_custom_implementations", use_custom_implementations);
 
     CLI11_PARSE(app, argc, argv);
 
@@ -104,10 +106,11 @@ int main(int argc, char* argv[]) {
             queue.poll(on_message);
             queue.terminate(on_message);
             if constexpr (is_queue_v2_v<decltype(queue)>) {
-                wait_all_time = queue.wait_all_time().count();
-                test_some_time = queue.test_some_time().count();
-                test_any_time = queue.test_any_time().count();
-                test_time = queue.test_time().count();
+                using namespace std::chrono;
+                wait_all_time = duration_cast<duration<double>>(queue.wait_all_time()).count();
+                test_some_time = duration_cast<duration<double>>(queue.test_some_time()).count();
+                test_any_time = duration_cast<duration<double>>(queue.test_any_time()).count();
+                test_time = duration_cast<duration<double>>(queue.test_time()).count();
             }
         });
         MPI_Barrier(MPI_COMM_WORLD);
@@ -115,12 +118,34 @@ int main(int argc, char* argv[]) {
         double local_times[4] = {wait_all_time, test_some_time, test_any_time, test_time};
         double max_times[4];
         MPI_Reduce(&local_times, &max_times, 4, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
-        if (rank == 0) {
-            std::cout << "RESULT version=" << queue_version << " ranks=" << size << " time=" << end - start
-                      << " iteration=" << i << " test_any=" << use_test_any << " wait_all_time=" << max_times[0]
-                      << " test_some_time=" << max_times[1] << " test_any_time=" << max_times[2]
-                      << " test_time=" << max_times[3] << "\n";
+
+        // print CLI options
+        std::unordered_map<std::string, std::string> stats;
+        for (const auto& option: app.get_options()) {
+            if (option->get_single_name() == "help") {
+                continue;
+            }
+            stats[option->get_single_name()] = option->as<std::string>();
+            if (stats[option->get_single_name()].empty()) {
+                stats[option->get_single_name()] = "false";
+            }
         }
+        stats["ranks"] = fmt::format("{}", size);
+        stats["time"] = fmt::format("{}", end - start);
+        stats["wait_all_time"] = fmt::format("{}", max_times[0]);
+        stats["test_some_time"] = fmt::format("{}", max_times[1]);
+        stats["test_any_time"] = fmt::format("{}", max_times[2]);
+        stats["test_time"] = fmt::format("{}", max_times[3]);
+        stats["iteration"] = fmt::format("{}", i);
+
+        if (rank == 0) {
+            std::cout << "RESULT";
+            for (const auto& [key, value]: stats) {
+                std::cout << " " << key << "=" << value;
+            }
+            std::cout << "\n";
+        }
+
     }
     // message_queue::atomic_debug(queue.overflows());
     return MPI_Finalize();
