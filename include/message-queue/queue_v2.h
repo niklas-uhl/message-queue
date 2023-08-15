@@ -52,6 +52,7 @@ public:
     template <typename CompletionFunction>
     void test_some(CompletionFunction&& on_complete = [](int) {}) {
         int outcount;
+        max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
         MPI_Testsome(active_range.second - active_range.first, requests.data() + active_range.first, &outcount,
                      indices.data(), MPI_STATUSES_IGNORE);
         if (outcount != MPI_UNDEFINED) {
@@ -70,6 +71,7 @@ public:
     void test_any(CompletionFunction&& on_complete = [](int) {}) {
         int flag;
         int index;
+        max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
         MPI_Testany(active_range.second - active_range.first, requests.data() + active_range.first, &index, &flag,
                     MPI_STATUS_IGNORE);
         if (flag && index != MPI_UNDEFINED) {
@@ -83,6 +85,7 @@ public:
     /// my request functions {{{
     template <typename CompletionFunction>
     void my_test_any(CompletionFunction&& on_complete = [](int) {}) {
+        max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
         for (int i = active_range.first; i < active_range.second; i++) {
             if (requests[i] == MPI_REQUEST_NULL) {
                 continue;
@@ -100,6 +103,7 @@ public:
 
     template <typename CompletionFunction>
     void my_test_some(CompletionFunction&& on_complete = [](int) {}) {
+        max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
         for (int i = active_range.first; i < active_range.second; i++) {
             if (requests[i] == MPI_REQUEST_NULL) {
                 continue;
@@ -120,6 +124,10 @@ public:
         return requests.size();
     }
 
+    int max_test_size() const {
+        return max_test_size_;
+    }
+
 private:
     void remove_from_active_range(int index) {
         if (index == active_range.first) {
@@ -134,6 +142,7 @@ private:
     std::vector<int> indices;
     boost::circular_buffer<int> inactive_request_indices;
     std::pair<int, int> active_range = {0, 0};
+    int max_test_size_ = 0;
 };
 
 template <typename T>
@@ -516,6 +525,10 @@ public:
         } else {
             return test_some_time();
         }
+    }
+
+    auto max_test_size() const {
+        return request_pool.max_test_size();
     }
 
     void use_test_any(bool use_it = true) {
