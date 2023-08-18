@@ -71,6 +71,7 @@ int main(int argc, char* argv[]) {
         double test_any_time = 0;
         double test_time = 0;
         int local_max_test_size = 0;
+        size_t local_max_active_requests = 0;
         with_queue(queue_version, [&](auto& queue) {
             if constexpr (is_queue_v2_v<decltype(queue)>) {
                 if (use_test_any) {
@@ -79,7 +80,7 @@ int main(int argc, char* argv[]) {
             }
             std::default_random_engine eng;
             eng.seed(rank);
-            std::bernoulli_distribution bernoulli_dist(0.0001);
+            std::bernoulli_distribution bernoulli_dist(0.01);
             std::uniform_int_distribution<size_t> rank_dist(1, size - 1);
             // auto queue = message_queue::make_mesqueue<int>(std::move(merger), std::move(splitter));
             // queue.set_threshold(200);
@@ -113,6 +114,7 @@ int main(int argc, char* argv[]) {
                 test_any_time = duration_cast<duration<double>>(queue.test_any_time()).count();
                 test_time = duration_cast<duration<double>>(queue.test_time()).count();
                 local_max_test_size = queue.max_test_size();
+                local_max_active_requests = queue.max_active_requests();
             }
         });
         MPI_Barrier(MPI_COMM_WORLD);
@@ -122,6 +124,10 @@ int main(int argc, char* argv[]) {
         MPI_Reduce(&local_times, &max_times, 4, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
         int global_max_test_size;
         MPI_Reduce(&local_max_test_size, &global_max_test_size, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
+
+        size_t global_max_active_requests;
+        MPI_Reduce(&local_max_active_requests, &global_max_active_requests, 1, MPI_UINT64_T, MPI_MAX, 0,
+                   MPI_COMM_WORLD);
         // print CLI options
         std::unordered_map<std::string, std::string> stats;
         for (const auto& option : app.get_options()) {
@@ -141,6 +147,7 @@ int main(int argc, char* argv[]) {
         stats["test_time"] = fmt::format("{}", max_times[3]);
         stats["iteration"] = fmt::format("{}", i);
         stats["max_test_size"] = fmt::format("{}", global_max_test_size);
+        stats["max_active_requests"] = fmt::format("{}", global_max_active_requests);
 
         if (rank == 0) {
             std::cout << "RESULT";

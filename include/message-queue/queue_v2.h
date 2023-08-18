@@ -38,6 +38,7 @@ public:
         }
         int index = inactive_request_indices.front();
         inactive_request_indices.pop_front();
+        max_active_requests_ = std::max(max_active_requests_, active_requests());
 
         // keep track of the range of indices that are in use
         if (index < active_range.first) {
@@ -61,6 +62,7 @@ public:
                 // map index to the global index
                 index += index_offset;
                 inactive_request_indices.push_back(index);
+                max_active_requests_ = std::max(max_active_requests_, active_requests());
                 remove_from_active_range(index);
                 on_complete(index);
             });
@@ -77,6 +79,7 @@ public:
         if (flag && index != MPI_UNDEFINED) {
             index += active_range.first;
             inactive_request_indices.push_back(index);
+            max_active_requests_ = std::max(max_active_requests_, active_requests());
             remove_from_active_range(index);
             on_complete(index);
         }
@@ -93,7 +96,7 @@ public:
             int flag;
             MPI_Test(&requests[i], &flag, MPI_STATUS_IGNORE);
             if (flag) {
-                inactive_request_indices.push_back(i);
+                max_active_requests_ = std::max(max_active_requests_, active_requests());
                 remove_from_active_range(i);
                 on_complete(i);
                 return;
@@ -111,11 +114,15 @@ public:
             int flag;
             MPI_Test(&requests[i], &flag, MPI_STATUS_IGNORE);
             if (flag) {
-                inactive_request_indices.push_back(i);
                 remove_from_active_range(i);
+                max_active_requests_ = std::max(max_active_requests_, active_requests());
                 on_complete(i);
             }
         }
+    }
+
+    std::size_t active_requests() const {
+        return capacity() - inactive_request_indices.size();
     }
 
     /// }}}
@@ -128,8 +135,13 @@ public:
         return max_test_size_;
     }
 
+    size_t max_active_requests() const {
+        return max_active_requests_;
+    }
+
 private:
     void remove_from_active_range(int index) {
+        inactive_request_indices.push_back(index);
         if (index == active_range.first) {
             active_range.first++;
         } else {
@@ -141,8 +153,11 @@ private:
     std::vector<MPI_Request> requests;
     std::vector<int> indices;
     boost::circular_buffer<int> inactive_request_indices;
+    size_t inactive_request_pointer = 0;
+    size_t active_requests_ = 0;
     std::pair<int, int> active_range = {0, 0};
     int max_test_size_ = 0;
+    std::size_t max_active_requests_ = 0;
 };
 
 template <typename T>
@@ -529,6 +544,10 @@ public:
 
     auto max_test_size() const {
         return request_pool.max_test_size();
+    }
+
+    auto max_active_requests() const {
+        return request_pool.max_active_requests();
     }
 
     void use_test_any(bool use_it = true) {
