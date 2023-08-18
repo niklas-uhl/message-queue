@@ -25,45 +25,65 @@
 namespace message_queue {
 class RequestPool {
 public:
-    RequestPool(std::size_t capacity = 0)
-        : requests(capacity, MPI_REQUEST_NULL), indices(capacity), inactive_request_indices(capacity) {
-        for (int i = 0; i < capacity; i++) {
-            inactive_request_indices.push_back(i);
-        }
-    }
+    RequestPool(std::size_t capacity = 0) : requests(capacity, MPI_REQUEST_NULL), indices(capacity) {}
 
-    std::optional<std::pair<int, MPI_Request*>> get_some_inactive_request() {
-        if (inactive_request_indices.empty()) {
+    std::optional<std::pair<int, MPI_Request*>> get_some_inactive_request(int hint = -1) {
+        if (inactive_requests() == 0) {
             return {};
         }
-        int index = inactive_request_indices.front();
-        inactive_request_indices.pop_front();
-        max_active_requests_ = std::max(max_active_requests_, active_requests());
 
-        // keep track of the range of indices that are in use
-        if (index < active_range.first) {
-            active_range.first = index;
+        // first check the hinted position
+        if (hint >= 0 && hint < capacity() && requests[hint] == MPI_REQUEST_NULL) {
+            return {{hint, &requests[hint]}};
         }
-        if (index + 1 > active_range.second) {
-            active_range.second = index + 1;
+
+        // first try to find a request in the active range if there is one
+        if (active_requests_ < active_range.second - active_range.first) {
+            for (auto i = active_range.first; i < active_range.second; i++) {
+                if (requests[i] == MPI_REQUEST_NULL) {
+                    add_to_active_range(i);
+                    track_max_active_requests();
+                    return {{i, &requests[i]}};
+                }
+            }
         }
-        return {{index, &requests[index]}};
+        // search right of the active range
+        for (auto i = active_range.second; i < capacity(); i++) {
+            if (requests[i] == MPI_REQUEST_NULL) {
+                add_to_active_range(i);
+                track_max_active_requests();
+                return {{i, &requests[i]}};
+            }
+        }
+        // search left of the active range starting at active_range.first
+        for (auto i = active_range.first - 1; i >= 0; i--) {
+            if (requests[i] == MPI_REQUEST_NULL) {
+                add_to_active_range(i);
+                track_max_active_requests();
+                return {{i, &requests[i]}};
+            }
+        }
+        // this should never happen
+        return {};
     }
 
     template <typename CompletionFunction>
     void test_some(CompletionFunction&& on_complete = [](int) {}) {
         int outcount;
         max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
-        MPI_Testsome(active_range.second - active_range.first, requests.data() + active_range.first, &outcount,
-                     indices.data(), MPI_STATUSES_IGNORE);
+        MPI_Testsome(active_range.second - active_range.first,  // count
+                     requests.data() + active_range.first,      // requests
+                     &outcount,                                 // outcount
+                     indices.data(),                            // indices
+                     MPI_STATUSES_IGNORE                        // statuses
+        );
         if (outcount != MPI_UNDEFINED) {
             auto index_offset = active_range.first;
             std::for_each_n(indices.begin(), outcount, [&](int index) {
                 // map index to the global index
                 index += index_offset;
-                inactive_request_indices.push_back(index);
-                max_active_requests_ = std::max(max_active_requests_, active_requests());
                 remove_from_active_range(index);
+                track_max_active_requests();
                 on_complete(index);
             });
         }
@@ -74,13 +94,16 @@ public:
         int flag;
         int index;
         max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
-        MPI_Testany(active_range.second - active_range.first, requests.data() + active_range.first, &index, &flag,
-                    MPI_STATUS_IGNORE);
+        MPI_Testany(active_range.second - active_range.first,  // count
+                    requests.data() + active_range.first,      // requests
+                    &index,                                    // index
+                    &flag,                                     // flag
+                    MPI_STATUS_IGNORE                          // status
+        );
         if (flag && index != MPI_UNDEFINED) {
             index += active_range.first;
-            inactive_request_indices.push_back(index);
-            max_active_requests_ = std::max(max_active_requests_, active_requests());
             remove_from_active_range(index);
+            track_max_active_requests();
             on_complete(index);
         }
     }
@@ -96,8 +119,8 @@ public:
             int flag;
             MPI_Test(&requests[i], &flag, MPI_STATUS_IGNORE);
             if (flag) {
-                max_active_requests_ = std::max(max_active_requests_, active_requests());
                 remove_from_active_range(i);
+                track_max_active_requests();
                 on_complete(i);
                 return;
             }
@@ -115,17 +138,21 @@ public:
             MPI_Test(&requests[i], &flag, MPI_STATUS_IGNORE);
             if (flag) {
                 remove_from_active_range(i);
-                max_active_requests_ = std::max(max_active_requests_, active_requests());
+                track_max_active_requests();
                 on_complete(i);
             }
         }
     }
 
+    /// }}}
+
     std::size_t active_requests() const {
-        return capacity() - inactive_request_indices.size();
+        return active_requests_;
     }
 
-    /// }}}
+    std::size_t inactive_requests() const {
+        return capacity() - active_requests();
+    }
 
     std::size_t capacity() const {
         return requests.size();
@@ -140,8 +167,26 @@ public:
     }
 
 private:
+    void track_max_active_requests() {
+        max_active_requests_ = std::max(max_active_requests_, active_requests());
+    }
+
+    void add_to_active_range(int index) {
+        active_requests_++;
+        if (index < active_range.first) {
+            active_range.first = index;
+        }
+        if (index + 1 > active_range.second) {
+            active_range.second = index + 1;
+        }
+        int rank;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        std::cout << "[R " << rank << "] active range: " << active_range.first << " " << active_range.second
+                  << "active requests: " << active_requests_ << "\n";
+    }
+
     void remove_from_active_range(int index) {
-        inactive_request_indices.push_back(index);
+        active_requests_--;
         if (index == active_range.first) {
             active_range.first++;
         } else {
@@ -149,10 +194,13 @@ private:
                 active_range.second--;
             }
         }
+        int rank;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        std::cout << "[R " << rank << "] active range: " << active_range.first << " " << active_range.second
+                  << "active requests: " << active_requests_ << "\n";
     }
     std::vector<MPI_Request> requests;
     std::vector<int> indices;
-    boost::circular_buffer<int> inactive_request_indices;
     size_t inactive_request_pointer = 0;
     size_t active_requests_ = 0;
     std::pair<int, int> active_range = {0, 0};
@@ -284,11 +332,11 @@ class MessageQueueV2 {
         try_send_something();
     }
 
-    bool try_send_something() {
+    bool try_send_something(int hint = -1) {
         if (outgoing_message_box.empty()) {
             return false;
         }
-        if (auto result = request_pool.get_some_inactive_request()) {
+        if (auto result = request_pool.get_some_inactive_request(hint)) {
             SendHandle<T> message_to_send = std::move(outgoing_message_box.front());
             outgoing_message_box.pop_front();
             auto [index, req_ptr] = *result;
@@ -344,17 +392,17 @@ public:
                 request_pool.test_some([&](int completed_request_index) {
                     in_transit_messages[completed_request_index] = {};
                     something_happenend = true;
+                    try_send_something(completed_request_index);
                 });
             } else {
                 request_pool.my_test_some([&](int completed_request_index) {
                     in_transit_messages[completed_request_index] = {};
                     something_happenend = true;
+                    try_send_something(completed_request_index);
                 });
             }
             auto end = std::chrono::high_resolution_clock::now();
             test_some_time_ += (end - start);
-            while (try_send_something()) {
-            }
         } else {
             bool progress = true;
             while (progress) {
@@ -365,19 +413,21 @@ public:
                         in_transit_messages[completed_request_index] = {};
                         something_happenend = true;
                         progress = true;
-                        try_send_something();
+                        try_send_something(completed_request_index);
                     });
                 } else {
                     request_pool.my_test_any([&](int completed_request_index) {
                         in_transit_messages[completed_request_index] = {};
                         something_happenend = true;
                         progress = true;
-                        try_send_something();
+                        try_send_something(completed_request_index);
                     });
                 }
                 auto end = std::chrono::high_resolution_clock::now();
                 test_any_time_ += (end - start);
             }
+        }
+        while (try_send_something()) {
         }
         while (auto probe_result = probe()) {
             something_happenend = true;

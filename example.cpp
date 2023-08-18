@@ -80,7 +80,7 @@ int main(int argc, char* argv[]) {
             }
             std::default_random_engine eng;
             eng.seed(rank);
-            std::bernoulli_distribution bernoulli_dist(0.01);
+            std::bernoulli_distribution bernoulli_dist(0.1);
             std::uniform_int_distribution<size_t> rank_dist(1, size - 1);
             // auto queue = message_queue::make_mesqueue<int>(std::move(merger), std::move(splitter));
             // queue.set_threshold(200);
