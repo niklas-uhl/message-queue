@@ -34,6 +34,8 @@ public:
 
         // first check the hinted position
         if (hint >= 0 && hint < capacity() && requests[hint] == MPI_REQUEST_NULL) {
+            add_to_active_range(hint);
+            track_max_active_requests();
             return {{hint, &requests[hint]}};
         }
 
@@ -181,8 +183,6 @@ private:
         }
         int rank;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        std::cout << "[R " << rank << "] active range: " << active_range.first << " " << active_range.second
-                  << "active requests: " << active_requests_ << "\n";
     }
 
     void remove_from_active_range(int index) {
@@ -196,8 +196,6 @@ private:
         }
         int rank;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        std::cout << "[R " << rank << "] active range: " << active_range.first << " " << active_range.second
-                  << "active requests: " << active_requests_ << "\n";
     }
     std::vector<MPI_Request> requests;
     std::vector<int> indices;
@@ -341,7 +339,7 @@ class MessageQueueV2 {
             outgoing_message_box.pop_front();
             auto [index, req_ptr] = *result;
             message_to_send.request = req_ptr;
-            // atomic_debug(fmt::format("isend msg={}, to {}", message_to_send.message, message_to_send.receiver));
+            // atomic_debug(fmt::format("isend msg={}, to {}, using request {}", message_to_send.message, message_to_send.receiver, index));
             in_transit_messages[index] = std::move(message_to_send);
             in_transit_messages[index].initiate_send();
             KASSERT(*message_to_send.request != MPI_REQUEST_NULL);
