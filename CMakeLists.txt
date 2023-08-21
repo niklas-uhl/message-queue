@@ -25,6 +25,8 @@ endif()
 if(MESSAGE_QUEUE_USE_MY_TEST_FUNCTIONS)
   target_compile_definitions(message-queue INTERFACE MESSAGE_QUEUE_USE_MY_TEST_FUNCTIONS)
 endif()
+add_library(message-queue::message-queue ALIAS message-queue)
+
 add_executable(message_queue_example example.cpp)
 target_link_libraries(message_queue_example PUBLIC message-queue fmt::fmt kassert::kassert
                                      CLI11::CLI11)
