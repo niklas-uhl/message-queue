@@ -380,6 +380,13 @@ public:
         stats_.send_volume.fetch_add(message_size, std::memory_order_relaxed);
     }
 
+    void post_message(T&& message, PEID receiver, int tag = 0) {
+        // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));
+        // assert(receiver != rank_);
+        std::vector message_vector{std::move(message)};
+        post_message(std::move(message_vector), receiver, tag);
+    }
+
     template <typename MessageHandler>
     bool poll(MessageHandler&& on_message) {
         // atomic_debug("Inner poll");
