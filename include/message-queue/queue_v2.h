@@ -4,8 +4,6 @@
 #include <fmt/ranges.h>
 #include <mpi.h>
 #include <atomic>
-#include <boost/circular_buffer.hpp>
-#include <boost/mpi/datatype.hpp>
 #include <chrono>
 #include <cstddef>
 #include <deque>
@@ -18,7 +16,9 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include "boost/mpi/datatype.hpp"
 #include "debug_print.h"
+#include "message-queue/datatype.hpp"
 #include "message-queue/debug_print.h"
 #include "message-queue/message_statistics.h"
 
@@ -212,7 +212,7 @@ class MessageQueueV2 {
     friend class BufferedMessageQueue;
     template <class U, class Merger, class Splitter>
     friend class ConcurrentBufferedMessageQueue;
-    static_assert(boost::mpi::is_mpi_builtin_datatype<T>::value, "Only builtin MPI types are supported");
+    // static_assert(boost::mpi::is_mpi_builtin_datatype<T>::value, "Only builtin MPI types are supported");
 
     enum class State { posted, initiated, completed };
 
@@ -244,8 +244,9 @@ class MessageQueueV2 {
 
         void initiate_send() {
             // atomic_debug(this->request_id);
-            int err = MPI_Isend(this->message.data(), this->message.size(), boost::mpi::get_mpi_datatype<S>(), receiver,
-                                this->tag, MPI_COMM_WORLD, this->request);
+            int err =
+                MPI_Isend(this->message.data(), this->message.size(), message_queue::mpi_type_traits<S>::get_type(),
+                          receiver, this->tag, MPI_COMM_WORLD, this->request);
             check_mpi_error(err, __FILE__, __LINE__);
         }
     };
@@ -261,22 +262,22 @@ class MessageQueueV2 {
         void start_receive() {
             this->message.resize(this->message_size);
 #ifdef MESSAGE_QUEUE_MATCHED_RECV
-            MPI_Imrecv(this->message.data(), this->message.size(), boost::mpi::get_mpi_datatype<S>(), &matched_message,
-                       this->request);
+            MPI_Imrecv(this->message.data(), this->message.size(), message_queue::mpi_type_traits<S>::get_type(),
+                       &matched_message, this->request);
 #else
-            MPI_Irecv(this->message.data(), this->message.size(), boost::mpi::get_mpi_datatype<S>(), this->sender,
-                      this->tag, MPI_COMM_WORLD, this->request);
+            MPI_Irecv(this->message.data(), this->message.size(), message_queue::mpi_type_traits<S>::get_type(),
+                      this->sender, this->tag, MPI_COMM_WORLD, this->request);
 #endif
         }
 
         void receive() {
             this->message.resize(this->message_size);
 #ifdef MESSAGE_QUEUE_MATCHED_RECV
-            MPI_Mrecv(this->message.data(), this->message.size(), boost::mpi::get_mpi_datatype<S>(),
+            MPI_Mrecv(this->message.data(), this->message.size(), message_queue::mpi_type_traits<S>::get_type(),
                       &this->matched_message, MPI_STATUS_IGNORE);
 #else
-            MPI_Recv(this->message.data(), this->message.size(), boost::mpi::get_mpi_datatype<S>(), this->sender,
-                     this->tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            MPI_Recv(this->message.data(), this->message.size(), message_queue::mpi_type_traits<S>::get_type(),
+                     this->sender, this->tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 #endif
         }
     };
@@ -291,7 +292,7 @@ class MessageQueueV2 {
         ReceiveHandle<S> handle() {
             ReceiveHandle<S> handle;
             int message_size;
-            MPI_Get_count(&status, boost::mpi::get_mpi_datatype<S>(), &message_size);
+            MPI_Get_count(&status, message_queue::mpi_type_traits<S>::get_type(), &message_size);
             handle.message_size = message_size;
 #ifdef MESSAGE_QUEUE_MATCHED_RECV
             handle.matched_message = matched_message;
@@ -339,7 +340,8 @@ class MessageQueueV2 {
             outgoing_message_box.pop_front();
             auto [index, req_ptr] = *result;
             message_to_send.request = req_ptr;
-            // atomic_debug(fmt::format("isend msg={}, to {}, using request {}", message_to_send.message, message_to_send.receiver, index));
+            // atomic_debug(fmt::format("isend msg={}, to {}, using request {}", message_to_send.message,
+            // message_to_send.receiver, index));
             in_transit_messages[index] = std::move(message_to_send);
             in_transit_messages[index].initiate_send();
             KASSERT(*message_to_send.request != MPI_REQUEST_NULL);
@@ -494,7 +496,7 @@ public:
             std::pair<size_t, size_t> local_count = {stats_.sent_messages, stats_.received_messages};
             std::pair<size_t, size_t> reduced_count;
             MPI_Request reduce_request;
-            MPI_Iallreduce(&local_count, &reduced_count, 2, boost::mpi::get_mpi_datatype<size_t>(), MPI_SUM,
+            MPI_Iallreduce(&local_count, &reduced_count, 2, message_queue::mpi_type_traits<size_t>::get_type(), MPI_SUM,
                            MPI_COMM_WORLD, &reduce_request);
             wave_count++;
             int reduce_finished = false;
@@ -540,7 +542,7 @@ public:
             if (termination_request == MPI_REQUEST_NULL) {
                 local_count = {stats_.sent_messages, stats_.received_messages};
                 // atomic_debug("Start reduce");
-                MPI_Iallreduce(&local_count, &reduced_count, 2, boost::mpi::get_mpi_datatype<size_t>(), MPI_SUM,
+                MPI_Iallreduce(&local_count, &reduced_count, 2, message_queue::mpi_type_traits<size_t>::get_type(), MPI_SUM,
                                MPI_COMM_WORLD, &termination_request);
             }
             wave_count++;
