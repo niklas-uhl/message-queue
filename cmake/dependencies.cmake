@@ -22,7 +22,9 @@ string(
   $<$<STREQUAL:"${MESSAGE_QUEUE_ASSERTION_LEVEL}","normal">:30>
   $<$<STREQUAL:${MESSAGE_QUEUE_ASSERTION_LEVEL},"heavy">:60>
   $<$<STREQUAL:"${MESSAGE_QUEUE_ASSERTION_LEVEL}","heavy">:60>)
-cpmaddpackage("gh:kamping-site/kassert#e683aef")
+if (NOT TARGET kassert)
+  cpmaddpackage("gh:kamping-site/kassert#e683aef")
+endif()
 cpmaddpackage(
   NAME
   sanitizers-cmake
