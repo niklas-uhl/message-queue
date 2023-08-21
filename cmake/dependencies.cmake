@@ -44,14 +44,20 @@ if(MESSAGE_QUEUE_BACKTRACE)
   cpmaddpackage("gh:kamping-site/bakward-mpi#a032e21")
 endif()
 
-find_package(Boost COMPONENTS mpi headers)
-if(Boost_FOUND)
-  add_library(message_queue_boost_dependencies INTERFACE)
-  target_link_libraries(message_queue_boost_dependencies INTERFACE Boost::mpi Boost::headers)
+option(MESSAGE_QUEUE_BUILD_BOOST "Build Boost from source, instead of using find_package" OFF)
+
+if (NOT MESSAGE_QUEUE_BUILD_BOOST)
+  find_package(Boost COMPONENTS mpi headers)
+  if(Boost_FOUND)
+    add_library(message_queue_boost_dependencies INTERFACE)
+    target_link_libraries(message_queue_boost_dependencies INTERFACE Boost::mpi Boost::headers)
+  else()
+    message(FATAL_ERROR "Boost not on your system. Please set MESSAGE_QUEUE_BUILD_BOOST to ON to build it from source.")
+  endif()
 else()
   message(
     STATUS
-    "Boost not found locally, downloading it. This may take several minutes.")
+    "Boost not found locally, downloading it and building from source. This may take several minutes.")
   set(BOOST_ENABLE_MPI ON)
   set(BOOST_INCLUDE_LIBRARIES mpi circular_buffer)
   cpmaddpackage(
