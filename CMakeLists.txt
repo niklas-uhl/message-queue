@@ -14,7 +14,7 @@ add_library(message-queue INTERFACE)
 target_include_directories(message-queue INTERFACE include)
 target_link_libraries(message-queue INTERFACE MPI::MPI_CXX
                                               message_queue_boost_dependencies)
-target_compile_features(message-queue INTERFACE cxx_std_17)
+target_compile_features(message-queue INTERFACE cxx_std_20)
 if(MESSAGE_QUEUE_BLOCKING_RECEIVE)
   target_compile_definitions(message-queue
                              INTERFACE MESSAGE_QUEUE_BLOCKING_RECEIVE)
