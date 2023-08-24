@@ -92,7 +92,7 @@ int main(int argc, char* argv[]) {
                 message[2] = i;
                 queue.post_message(std::vector<int>(message), (rank + rank_dist(eng)) % size);
             }
-            auto on_message = [&](auto msg, message_queue::PEID sender) {
+            auto on_message = [&](auto msg, message_queue::PEID sender, int tag = 0) {
                 if (bernoulli_dist(eng)) {
                     auto begin = msg.begin();
                     std::stringstream ss;

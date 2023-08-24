@@ -319,6 +319,11 @@ struct MessageCounter {
 
 }  // namespace internal
 
+template <typename MessageFunc, typename MessageDataType, template <typename...> typename Container>
+concept MessageHandler = requires(MessageFunc f, Container<MessageDataType> message, PEID sender, int tag) {
+    f(std::move(message), sender, tag);
+};
+
 template <typename T>
 class MessageQueueV2 {
     template <class U, class Merger, class Splitter>
@@ -393,12 +398,9 @@ public:
         post_message(std::move(message_vector), receiver, tag);
     }
 
-    template <typename MessageHandler>
-    bool poll(MessageHandler&& on_message) {
-        // atomic_debug("Inner poll");
-        static_assert(std::is_invocable_v<MessageHandler, std::vector<T>, PEID>);
+    bool progress_sending() {
+        // check for finished sends and try starting new ones
         bool something_happenend = false;
-        size_t i = 0;
         if (!use_test_any_) {
             auto start = std::chrono::high_resolution_clock::now();
             if (!use_custom_implementation_) {
@@ -442,6 +444,11 @@ public:
         }
         while (try_send_something()) {
         }
+        return something_happenend;
+    }
+
+    bool probe_for_messages(MessageHandler<T, std::vector> auto&& on_message) {
+        bool something_happenend = false;
         while (auto probe_result = internal::handles::probe()) {
             something_happenend = true;
             auto recv_handle = probe_result->template handle<T>();
@@ -466,9 +473,11 @@ public:
         return something_happenend;
     }
 
-    template <typename MessageHandler>
-    void terminate(MessageHandler&& on_message) {
-        terminate_impl(on_message, []() {});
+    bool poll(MessageHandler<T, std::vector> auto&& on_message) {
+        bool something_happenend = false;
+        something_happenend |= progress_sending();
+        something_happenend |= probe_for_messages(on_message);
+        return something_happenend;
     }
 
     void reset() {
@@ -492,97 +501,72 @@ public:
         return size_;
     }
 
-    bool check_termination_condition() const {
-        return message_count_reduce_buffer == global_message_count &&
-               global_message_count.send == global_message_count.receive && global_message_count.send != 0;
+    bool check_termination_condition() {
+        bool terminated = message_count_reduce_buffer == global_message_count &&
+                          global_message_count.send == global_message_count.receive && global_message_count.send != 0;
+        if (!terminated) {
+            // store for double counting
+            global_message_count = message_count_reduce_buffer;
+        }
+        termination_state = TerminationState::terminated;
+        return terminated;
     }
 
-    template <typename MessageHandler, typename PreWaveHook>
-    void terminate_impl(MessageHandler&& on_message, PreWaveHook&& pre_wave) {
-        // atomic_debug("Inner terminate");
-        int wave_count = 0;
-        while (true) {
-            pre_wave();
-            while (!outgoing_message_box.empty()) {
-                poll(on_message);
+    void poll_until_message_box_empty(
+        MessageHandler<T, std::vector> auto&& on_message,
+        std::predicate<> auto&& should_stop_polling = [] { return false; }) {
+        while (!outgoing_message_box.empty()) {
+            poll(on_message);
+            if (should_stop_polling()) {
+                return;
             }
-            // atomic_debug("Handles empty");
+        }
+    }
+
+    void start_message_counting() {
+        if (termination_request == MPI_REQUEST_NULL) {
             message_count_reduce_buffer = local_message_count;
+            // atomic_debug("Start reduce");
             MPI_Iallreduce(MPI_IN_PLACE, &message_count_reduce_buffer, 2,
                            message_queue::mpi_type_traits<size_t>::get_type(), MPI_SUM, MPI_COMM_WORLD,
                            &termination_request);
-            wave_count++; int reduce_finished = false;
-            while (!reduce_finished) {
-                poll(on_message);
-                if (termination_request == MPI_REQUEST_NULL) {
-                    throw "Error";
-                }
-                int err = MPI_Test(&termination_request, &reduce_finished, MPI_STATUS_IGNORE);
-                if (err != MPI_SUCCESS) {
-                    throw "Error";
-                }
+        }
+    }
+
+    bool message_counting_finished() {
+        if (termination_request == MPI_REQUEST_NULL) {
+            return true;
+        }
+        int reduce_finished = false;
+        int err = MPI_Test(&termination_request, &reduce_finished, MPI_STATUS_IGNORE);
+        check_mpi_error(err, __FILE__, __LINE__);
+    }
+
+    bool terminate(MessageHandler<T, std::vector> auto&& on_message,
+                   std::invocable<> auto&& before_next_message_counting_round_hook) {
+        termination_state = TerminationState::trying_termination;
+        while (true) {
+            before_next_message_counting_round_hook();
+            poll_until_message_box_empty(on_message, [&] { return termination_state == TerminationState::active; });
+            if (termination_state == TerminationState::active) {
+                return false;
             }
-            if (rank_ == 0) {
-                // atomic_debug("Wave count " + std::to_string(wave_count));
+            start_message_counting();
+            while (!message_counting_finished()) {
+                poll(on_message);
+                if (termination_state == TerminationState::active) {
+                    return false;
+                }
             }
             if (check_termination_condition()) {
-                break;
-            } else {
-                global_message_count = message_count_reduce_buffer;
+                termination_state = TerminationState::terminated;
+                return true;
             }
         }
     }
 
-    template <typename MessageHandler, typename PreWaveHook>
-    bool try_terminate_impl(MessageHandler&& on_message, PreWaveHook&& pre_wave) {
-        if (size_ == 1) {
-            return true;
-        }
-        termination_state = TerminationState::trying_termination;
-        int wave_count = 0;
-        while (true) {
-            pre_wave();
-            while (!outgoing_message_box.empty()) {
-                poll(on_message);
-                // atomic_debug("Poll before");
-                if (termination_state == TerminationState::active) {
-                    // atomic_debug("Reactivated");
-                    return false;
-                }
-            }
-            std::pair<size_t, size_t> reduced_count;
-            if (termination_request == MPI_REQUEST_NULL) {
-                message_count_reduce_buffer = local_message_count;
-                // atomic_debug("Start reduce");
-                MPI_Iallreduce(MPI_IN_PLACE, &message_count_reduce_buffer, 2,
-                               message_queue::mpi_type_traits<size_t>::get_type(), MPI_SUM, MPI_COMM_WORLD,
-                               &termination_request);
-            }
-            wave_count++;
-            int reduce_finished = false;
-            while (!reduce_finished) {
-                poll(on_message);
-                // atomic_debug("Poll after inititated");
-                int err = MPI_Test(&termination_request, &reduce_finished, MPI_STATUS_IGNORE);
-                check_mpi_error(err, __FILE__, __LINE__);
-                if (termination_state == TerminationState::active) {
-                    // atomic_debug("Reactivated");
-                    return false;
-                }
-            }
-            // atomic_debug("Reduce finished");
-            if (rank_ == 0) {
-                // atomic_debug("Wave count " + std::to_string(wave_count));
-            }
-            if (check_termination_condition()) {
-                // atomic_debug("Terminated");
-                // atomic_debug(reduced_count);
-                termination_state = TerminationState::terminated;
-                return true;
-            } else {
-                global_message_count = message_count_reduce_buffer;
-            }
-        }
+    bool terminate(MessageHandler<T, std::vector> auto&& on_message) {
+        return terminate(on_message, [] {});
     }
 
     auto wait_all_time() const {
