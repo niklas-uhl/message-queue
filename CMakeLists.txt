@@ -27,21 +27,20 @@ if(MESSAGE_QUEUE_USE_MY_TEST_FUNCTIONS)
 endif()
 add_library(message-queue::message-queue ALIAS message-queue)
 
-add_executable(message_queue_example example.cpp)
-target_link_libraries(message_queue_example PUBLIC message-queue fmt::fmt kassert::kassert
+add_executable(message_hopping_example message_hopping_example.cpp)
+target_link_libraries(message_hopping_example PUBLIC message-queue fmt::fmt kassert::kassert
                                      CLI11::CLI11)
 
-add_executable(message-queue::example ALIAS message_queue_example)
 
 # add_executable(asynchronous asynchronous.cpp)
 # target_link_libraries(asynchronous MPI::MPI_CXX)
 
-add_executable(message_queue_bfs bfs.cpp)
-target_link_libraries(message_queue_bfs PUBLIC message-queue KaGen::KaGen CLI11::CLI11
+add_executable(async_bfs_example async_bfs_example.cpp)
+target_link_libraries(async_bfs_example PUBLIC message-queue KaGen::KaGen CLI11::CLI11
                                  kassert::kassert fmt::fmt)
 if(MESSAGE_QUEUE_BACKTRACE)
-  target_link_libraries(message_queue_bfs PUBLIC Backward::Backward)
+  target_link_libraries(async_bfs_example PUBLIC Backward::Backward)
 endif()
-add_sanitizers(message_queue_bfs)
+add_sanitizers(async_bfs_example)
 
-add_executable(message-queue::bfs ALIAS message_queue_bfs)
+add_executable(message-queue::async_bfs_example ALIAS async_bfs_example)
