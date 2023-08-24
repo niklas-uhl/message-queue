@@ -24,6 +24,12 @@
 
 namespace message_queue {
 namespace internal {
+inline int world_size() {
+    int size;
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    return size;
+}
+
 class RequestPool {
 public:
     RequestPool(std::size_t capacity = 0) : requests(capacity, MPI_REQUEST_NULL), indices(capacity) {}
@@ -366,10 +372,10 @@ class MessageQueueV2 {
     }
 
 public:
-    MessageQueueV2()
+    MessageQueueV2(size_t num_request_slots = internal::world_size())
         : outgoing_message_box(),
-          request_pool(),
-          in_transit_messages(),
+          request_pool(num_request_slots),
+          in_transit_messages(num_request_slots),
           messages_to_receive(),
           receive_requests(),
           request_id_(0),
@@ -377,8 +383,6 @@ public:
           size_(0) {
         MPI_Comm_rank(MPI_COMM_WORLD, &rank_);
         MPI_Comm_size(MPI_COMM_WORLD, &size_);
-        request_pool = internal::RequestPool{static_cast<size_t>(size_)};
-        in_transit_messages = std::vector<internal::handles::SendHandle<T>>{request_pool.capacity()};
     }
 
     void post_message(std::vector<T>&& message, PEID receiver, int tag = 0) {
@@ -540,6 +544,7 @@ public:
         int reduce_finished = false;
         int err = MPI_Test(&termination_request, &reduce_finished, MPI_STATUS_IGNORE);
         check_mpi_error(err, __FILE__, __LINE__);
+        return reduce_finished;
     }
 
     bool terminate(MessageHandler<T, std::vector> auto&& on_message,
