@@ -507,7 +507,7 @@ public:
 
     bool check_termination_condition() {
         bool terminated = message_count_reduce_buffer == global_message_count &&
-                          global_message_count.send == global_message_count.receive && global_message_count.send != 0;
+                          global_message_count.send == global_message_count.receive;
         if (!terminated) {
             // store for double counting
             global_message_count = message_count_reduce_buffer;
@@ -617,7 +617,7 @@ private:
     std::vector<internal::handles::SendHandle<T>> in_transit_messages;
     std::vector<internal::handles::ReceiveHandle<T>> messages_to_receive;
     std::vector<MPI_Request> receive_requests;
-    internal::MessageCounter local_message_count;
+    internal::MessageCounter local_message_count = {0, 0};
     internal::MessageCounter message_count_reduce_buffer;
     internal::MessageCounter global_message_count = {std::numeric_limits<size_t>::max(),
                                                      std::numeric_limits<size_t>::max() - 1};
