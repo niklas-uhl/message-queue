@@ -38,4 +38,10 @@ struct mpi_type_traits<std::pair<T1, T2>,
         return type;
     }
 };
+
+template <typename T>
+concept MPIType = requires(T t) {
+    { mpi_type_traits<T>::get_type() } -> std::same_as<MPI_Datatype>;
+};
+
 }  // namespace message_queue

@@ -214,7 +214,7 @@ private:
 };
 
 namespace handles {
-template <class S>
+template <MPIType S>
 struct MessageHandle {
     size_t message_size;
     std::vector<S> message;
@@ -236,7 +236,7 @@ struct MessageHandle {
     }
 };
 
-template <class S>
+template <MPIType S>
 struct SendHandle : MessageHandle<S> {
     PEID receiver = MPI_ANY_SOURCE;
 
@@ -248,7 +248,7 @@ struct SendHandle : MessageHandle<S> {
     }
 };
 
-template <class S>
+template <MPIType S>
 struct ReceiveHandle : MessageHandle<S> {
 #ifdef MESSAGE_QUEUE_MATCHED_RECV
     MPI_Message matched_message;
@@ -285,7 +285,7 @@ struct ProbeResult {
     PEID sender;
     int tag;
 
-    template <typename S>
+    template <MPIType S>
     ReceiveHandle<S> handle() {
         ReceiveHandle<S> handle;
         int message_size;
@@ -326,11 +326,12 @@ struct MessageCounter {
 }  // namespace internal
 
 template <typename MessageFunc, typename MessageDataType, template <typename...> typename Container>
-concept MessageHandler = requires(MessageFunc f, Container<MessageDataType> message, PEID sender, int tag) {
-    f(std::move(message), sender, tag);
-};
+concept MessageHandler =
+    MPIType<MessageDataType> && requires(MessageFunc f, Container<MessageDataType> message, PEID sender, int tag) {
+        f(std::move(message), sender, tag);
+    };
 
-template <typename T>
+template <MPIType T>
 class MessageQueueV2 {
     template <class U, class Merger, class Splitter>
     friend class BufferedMessageQueue;
