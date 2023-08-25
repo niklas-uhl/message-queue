@@ -396,7 +396,7 @@ public:
         local_message_count.send++;
     }
 
-    void post_message(T&& message, PEID receiver, int tag = 0) {
+    void post_message(T message, PEID receiver, int tag = 0) {
         // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));
         // assert(receiver != rank_);
         std::vector message_vector{std::move(message)};
@@ -472,7 +472,7 @@ public:
         for (auto& handle : messages_to_receive) {
             // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
             local_message_count.receive++;
-            on_message(std::move(handle.message), handle.sender);
+            on_message(std::move(handle.message), handle.sender, handle.tag);
         }
         messages_to_receive.clear();
         return something_happenend;

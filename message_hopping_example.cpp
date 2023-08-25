@@ -6,6 +6,7 @@
 #include "message-queue/debug_print.h"
 #include "message-queue/queue.h"
 #include "message-queue/queue_v2.h"
+#include "message-queue/buffered_queue_v2.h"
 
 template <typename Functor>
 void with_queue(int version, Functor&& func) {
