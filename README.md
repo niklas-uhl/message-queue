@@ -1,4 +1,4 @@
-# 📬 message-queue :time
+# 📬 message-queue
 
 Asynchronous (buffering) MPI message queue implementation 📬
 
