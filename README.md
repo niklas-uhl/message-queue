@@ -2,6 +2,27 @@
 
 Asynchronous (buffering) MPI message queue implementation 📬
 
+This has been developed as part of our work on [distributed triangle counting](https://github.com/niklas-uhl/katric).
+
+If you use this code in the context of an academic publication, we kindly ask you to cite [the corresponding paper](https://doi.org/10.1109/IPDPS54959.2023.00076):
+
+```bibtex
+@inproceedings{sanders2023
+  author       = {Peter Sanders and
+                  Tim Niklas Uhl},
+  title        = {Engineering a Distributed-Memory Triangle Counting Algorithm},
+  booktitle    = {{IEEE} International Parallel and Distributed Processing Symposium,
+                  {IPDPS} 2023, St. Petersburg, FL, USA, May 15-19, 2023},
+  pages        = {702--712},
+  publisher    = {{IEEE}},
+  year         = {2023},
+  url          = {https://doi.org/10.1109/IPDPS54959.2023.00076},
+  doi          = {10.1109/IPDPS54959.2023.00076},
+}
+```
+
+You can also find a [freely accessible postprint in the arXiv](https://arxiv.org/abs/2302.11443).
+
 ## Usage
 This library is header only. You need a C++ 20 ready compiler (tested with GCC11 and GCC13) and Boost. If you do not have a suitable Boost version installed, the message queue can be configured to build it for you (this may take some time). If you want this, set the CMake cache variable `MESSAGE_QUEUE_BUILD_BOOST` to `ON`.
 
