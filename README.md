@@ -1,6 +1,6 @@
-# message-queue
+# 📬 message-queue
 
-Asynchronous (buffering) MPI message queue implementation :mailbox-with-mail:
+Asynchronous (buffering) MPI message queue implementation 📬
 
 ## Usage
 This library is header only. You need a C++ 20 ready compiler (tested with GCC11 and GCC13) and Boost. If you do not have a suitable Boost version installed, the message queue can be configured to build it for you (this may take some time). If you want this, set the CMake cache variable `MESSAGE_QUEUE_BUILD_BOOST` to `ON`.
