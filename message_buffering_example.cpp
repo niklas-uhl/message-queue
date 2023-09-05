@@ -4,7 +4,10 @@
 
 auto main() -> int {
     MPI_Init(nullptr, nullptr);
-    auto queue = message_queue::BufferedMessageQueueV2<int>{};
+    auto printing_cleaner = [](auto& buf, message_queue::PEID receiver) {
+        message_queue::atomic_debug(fmt::format("Preparing buffer {} to {}.", buf, receiver));
+    };
+    auto queue = message_queue::make_buffered_queue_with_cleaner<int>(printing_cleaner);
     int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
@@ -12,7 +15,7 @@ auto main() -> int {
     size_t number_of_messages = 5;
     std::mt19937 gen;
     std::uniform_int_distribution<int> dist(0, size - 1);
-    queue.global_threshold(2);
+    //queue.global_threshold(2);
     for (auto i = 0; i < number_of_messages; ++i) {
         int val = dist(gen);
         queue.post_message(val, val);

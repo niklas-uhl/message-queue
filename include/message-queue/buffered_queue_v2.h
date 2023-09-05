@@ -52,10 +52,11 @@ concept Splitter = requires(SplitterType split, ContainerType<T> const& buffer) 
 };
 
 template <typename BufferCleanerType, typename T, template <typename...> typename ContainerType>
-concept BufferCleaner =
-    requires(BufferCleanerType pre_send_cleanup, ContainerType<T>& buffer) { pre_send_cleanup(buffer); };
+concept BufferCleaner = requires(BufferCleanerType pre_send_cleanup, ContainerType<T>& buffer, PEID receiver) {
+    pre_send_cleanup(buffer, receiver);
+};
 
-template <typename T, template <typename...> typename ContainerType>
+template <typename T, template <typename...> typename ContainerType = std::vector>
 struct AppendMerger {
     void operator()(ContainerType<T>& buffer, ContainerType<T> const& message, int tag) const {
         buffer.insert(std::end(buffer), std::begin(message), std::end(message));
@@ -66,7 +67,7 @@ struct AppendMerger {
 };
 static_assert(EstimatingMerger<AppendMerger<int, std::vector>, int, std::vector>);
 
-template <typename T, template <typename...> typename ContainerType>
+template <typename T, template <typename...> typename ContainerType = std::vector>
 struct NoSplitter {
     auto operator()(ContainerType<T> const& buffer) const {
         return std::ranges::single_view(std::make_pair(0, buffer));
@@ -74,7 +75,7 @@ struct NoSplitter {
 };
 static_assert(Splitter<NoSplitter<int, std::vector>, int, std::vector>);
 
-template <typename T, template <typename...> typename ContainerType>
+template <typename T, template <typename...> typename ContainerType = std::vector>
 struct SentinelMerger {
     SentinelMerger(int sentinel) : sentinel_(sentinel) {}
     void operator()(ContainerType<T>& buffer, ContainerType<T> const& message, int tag) const {
@@ -88,7 +89,7 @@ struct SentinelMerger {
 };
 static_assert(EstimatingMerger<SentinelMerger<int, std::vector>, int, std::vector>);
 
-template <typename T, template <typename...> typename ContainerType>
+template <typename T, template <typename...> typename ContainerType = std::vector>
 struct SentinelSplitter {
     SentinelSplitter(int sentinel) : sentinel_(sentinel) {}
     auto operator()(ContainerType<T> const& buffer) const {
@@ -100,9 +101,9 @@ struct SentinelSplitter {
 
 static_assert(Splitter<SentinelSplitter<int, std::vector>, int, std::vector>);
 
-template <typename T, template <typename...> typename ContainerType>
+template <typename T, template <typename...> typename ContainerType = std::vector>
 struct NoOpCleaner {
-    void operator()(ContainerType<T>& buffer) const {}
+    void operator()(ContainerType<T>& buffer, PEID) const {}
 };
 static_assert(BufferCleaner<NoOpCleaner<int, std::vector>, int, std::vector>);
 
@@ -112,9 +113,10 @@ enum class FlushStrategy { local, global, random, largest };
 
 template <MPIType T,
           template <typename...> typename BufferContainerType = std::vector,
-          typename Merger = aggregation::AppendMerger<T, BufferContainerType>,
-          typename Splitter = aggregation::NoSplitter<T, BufferContainerType>,
-          typename BufferCleaner = aggregation::NoOpCleaner<T, BufferContainerType>>
+          aggregation::Merger<T, BufferContainerType> Merger = aggregation::AppendMerger<T, BufferContainerType>,
+          aggregation::Splitter<T, BufferContainerType> Splitter = aggregation::NoSplitter<T, BufferContainerType>,
+          aggregation::BufferCleaner<T, BufferContainerType> BufferCleaner =
+              aggregation::NoOpCleaner<T, BufferContainerType>>
 class BufferedMessageQueueV2 {
 public:
     BufferedMessageQueueV2(size_t num_request_slots = internal::world_size(),
@@ -152,19 +154,18 @@ public:
 
     void flush_buffer(PEID receiver) {
         auto& buffer = buffers_[receiver];
-        pre_send_cleanup(buffer);
+        pre_send_cleanup(buffer, receiver);
         if (buffer.empty()) {
             return;
         }
         global_buffer_size_ -= buffer.size();
         queue_.post_message(std::move(buffer), receiver);
-        //buffers_.erase(receiver);
+        // return buffers_.erase(receiver);
     }
 
     void flush_largest_buffer() {
-        auto largest_buffer = std::max_element(buffers_.begin(), buffers_.end(), [](auto& a, auto& b) {
-            return a.second.size() < b.second.size();
-        });
+        auto largest_buffer = std::max_element(buffers_.begin(), buffers_.end(),
+                                               [](auto& a, auto& b) { return a.second.size() < b.second.size(); });
         if (largest_buffer != buffers_.end()) {
             flush_buffer(largest_buffer->first);
         }
@@ -232,7 +233,7 @@ public:
 
 private:
     void resolve_overflow(PEID receiver) {
-        switch(flush_strategy_) {
+        switch (flush_strategy_) {
             case FlushStrategy::local:
                 flush_buffer(receiver);
                 break;
@@ -259,7 +260,6 @@ private:
         return check_for_global_buffer_overflow(buffer_size_delta) ||
                check_for_local_buffer_overflow(receiver, buffer_size_delta);
     }
-
     MessageQueueV2<T> queue_;
     std::unordered_map<PEID, BufferContainerType<T>> buffers_;
     Merger&& merge;
@@ -270,5 +270,14 @@ private:
     size_t local_threshold_ = std::numeric_limits<size_t>::max();
     FlushStrategy flush_strategy_ = FlushStrategy::global;
 };
+template <typename T,
+          template <typename> typename BufferContainerType = std::vector,
+          aggregation::BufferCleaner<T, BufferContainerType> Cleaner>
+auto make_buffered_queue_with_cleaner(Cleaner&& cleaner) {
+    return BufferedMessageQueueV2<T, BufferContainerType, aggregation::AppendMerger<T, BufferContainerType>,
+                                  aggregation::NoSplitter<T, BufferContainerType>, Cleaner>(
+        internal::world_size(), aggregation::AppendMerger<T, BufferContainerType>{},
+        aggregation::NoSplitter<T, BufferContainerType>{}, std::forward<Cleaner>(cleaner));
+}
 
 }  // namespace message_queue
