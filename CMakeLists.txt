@@ -13,7 +13,7 @@ include(cmake/dependencies.cmake)
 add_library(message-queue INTERFACE)
 target_include_directories(message-queue INTERFACE include)
 target_link_libraries(message-queue INTERFACE MPI::MPI_CXX
-                                              message_queue_boost_dependencies)
+                                              message_queue_boost_dependencies kassert::kassert)
 target_compile_features(message-queue INTERFACE cxx_std_20)
 if(MESSAGE_QUEUE_BLOCKING_RECEIVE)
   target_compile_definitions(message-queue
@@ -36,24 +36,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION
   )
 endif()
 add_library(message-queue::message-queue ALIAS message-queue)
-add_executable(message_hopping_example message_hopping_example.cpp)
-target_link_libraries(
-  message_hopping_example PUBLIC message-queue fmt::fmt kassert::kassert
-                                 CLI11::CLI11)
 
-# add_executable(asynchronous asynchronous.cpp)
-# target_link_libraries(asynchronous MPI::MPI_CXX)
-
-add_executable(async_bfs_example async_bfs_example.cpp)
-target_link_libraries(
-  async_bfs_example PUBLIC message-queue KaGen::KaGen CLI11::CLI11
-                           kassert::kassert fmt::fmt)
-if(MESSAGE_QUEUE_BACKTRACE)
-  target_link_libraries(async_bfs_example PUBLIC Backward::Backward)
+if (CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME OR MESSAGE_QUEUE_BUILD_EXAMPLES)
+  add_subdirectory(examples)
 endif()
-add_sanitizers(async_bfs_example)
-
-add_executable(message_buffering_example message_buffering_example.cpp)
-target_link_libraries(
-  message_buffering_example PUBLIC message-queue CLI11::CLI11
-                                   kassert::kassert fmt::fmt)
