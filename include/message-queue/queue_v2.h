@@ -24,10 +24,10 @@
 
 namespace message_queue {
 namespace internal {
-inline int world_size() {
+inline size_t world_size() {
     int size;
     MPI_Comm_size(MPI_COMM_WORLD, &size);
-    return size;
+    return static_cast<size_t>(size);
 }
 
 class RequestPool {
@@ -216,7 +216,7 @@ private:
 namespace handles {
 template <MPIType S>
 struct MessageHandle {
-    size_t message_size;
+    size_t message_size = 0;
     std::vector<S> message;
     MPI_Request* request = nullptr;
     size_t request_id;
