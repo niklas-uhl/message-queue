@@ -270,8 +270,9 @@ private:
     size_t local_threshold_ = std::numeric_limits<size_t>::max();
     FlushStrategy flush_strategy_ = FlushStrategy::global;
 };
+
 template <typename T,
-          template <typename> typename BufferContainerType = std::vector,
+          template <typename...> typename BufferContainerType = std::vector,
           aggregation::BufferCleaner<T, BufferContainerType> Cleaner>
 auto make_buffered_queue_with_cleaner(Cleaner&& cleaner) {
     return BufferedMessageQueueV2<T, BufferContainerType, aggregation::AppendMerger<T, BufferContainerType>,
