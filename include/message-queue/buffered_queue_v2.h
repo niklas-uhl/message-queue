@@ -119,6 +119,8 @@ template <MPIType T,
               aggregation::NoOpCleaner<T, BufferContainerType>>
 class BufferedMessageQueueV2 {
 public:
+    using BufferMap = std::unordered_map<PEID, BufferContainerType<T>>;
+
     BufferedMessageQueueV2(size_t num_request_slots = internal::world_size(),
                            Merger&& merger = Merger{},
                            Splitter&& splitter = Splitter{},
@@ -153,27 +155,40 @@ public:
     }
 
     void flush_buffer(PEID receiver) {
-        auto& buffer = buffers_[receiver];
-        pre_send_cleanup(buffer, receiver);
+        auto it = buffers_.find(receiver);
+        KASSERT(buffers_.end() != it, "Trying to flush non-existing buffer for receiver " << receiver);
+        flush_buffer_impl(it);
+    }
+
+    auto flush_buffer_impl(BufferMap::iterator buffer_it) {
+        KASSERT(buffer_it != buffers_.end(), "Trying to flush non-existing buffer.");
+        auto& [receiver, buffer] = *buffer_it;
         if (buffer.empty()) {
-            return;
+            return ++buffer_it;
         }
-        global_buffer_size_ -= buffer.size();
+        auto pre_cleanup_buffer_size = buffer.size();
+        pre_send_cleanup(buffer, receiver);
+        // we don't send if the cleanup has emptied the buffer
+        if (buffer.empty()) {
+            return ++buffer_it;
+        }
         queue_.post_message(std::move(buffer), receiver);
-        // return buffers_.erase(receiver);
+        global_buffer_size_ -= pre_cleanup_buffer_size;
+        return buffers_.erase(buffer_it);
     }
 
     void flush_largest_buffer() {
         auto largest_buffer = std::max_element(buffers_.begin(), buffers_.end(),
                                                [](auto& a, auto& b) { return a.second.size() < b.second.size(); });
         if (largest_buffer != buffers_.end()) {
-            flush_buffer(largest_buffer->first);
+            flush_buffer_impl(largest_buffer);
         }
     }
 
     void flush_all_buffers() {
-        for (auto& [receiver, buffer] : buffers_) {
-            flush_buffer(receiver);
+        auto it = buffers_.begin();
+        while (it != buffers_.end()) {
+            it = flush_buffer_impl(it);
         }
     }
 
@@ -261,7 +276,7 @@ private:
                check_for_local_buffer_overflow(receiver, buffer_size_delta);
     }
     MessageQueueV2<T> queue_;
-    std::unordered_map<PEID, BufferContainerType<T>> buffers_;
+    BufferMap buffers_;
     Merger&& merge;
     Splitter&& split;
     BufferCleaner&& pre_send_cleanup;
