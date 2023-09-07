@@ -29,7 +29,21 @@ This library is header only. You need a C++ 20 ready compiler (tested with GCC11
 To use it in your project, include this repo using `FetchContent`, as `git submodule` or your preferred way of CMake dependency management and (if needed) include it as subdirectory[^1] . You can link against it using
 
 ``` cmake
-target_link_libraries(<your-target> PRIVATE message-queue::message_queue)
+# if using git submodules
+add_subdirectory(path/to/submodule)
+
+# if using FetchContent
+FetchContent_Declare(message-queue
+  GIT_REPOSITORY https://github.com/niklas-uhl/message-queue
+  GIT_TAG main # or current commit
+)
+FetchContent_MakeAvailable(message-queue)
+
+# using CPM (recommended)
+CPMAddPackage("gh:niklas-uhl/message-queue#master")  # or current commit
+
+# link against the target
+target_link_libraries(<your-target> PRIVATE message-queue::message-queue)
 ```
 
 You most likely want to use the most current implementation with buffering enabled. To do so, include `message-queue/buffered_queue_v2.h`. For a usage example, see `message_buffering_example.cpp`.
