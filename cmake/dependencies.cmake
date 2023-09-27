@@ -62,7 +62,6 @@ endif()
 if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME OR MESSAGE_QUEUE_BUILD_EXAMPLES)
   cpmaddpackage("gh:CLIUtils/CLI11@2.3.2")
   cpmaddpackage("gh:fmtlib/fmt#10.0.0")
-  cpmaddpackage("gh:KarlsruheGraphGeneration/KaGen#7dd137e")
   cpmaddpackage(
     NAME
     sanitizers-cmake

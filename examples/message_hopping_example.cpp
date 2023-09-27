@@ -4,30 +4,7 @@
 #include <random>
 #include <string>
 #include "message-queue/debug_print.h"
-#include "message-queue/queue.h"
 #include "message-queue/queue_v2.h"
-#include "message-queue/buffered_queue_v2.h"
-
-template <typename Functor>
-void with_queue(int version, Functor&& func) {
-    switch (version) {
-        case 1: {
-            auto queue = message_queue::MessageQueue<int>{};
-            func(queue);
-            break;
-        }
-        case 2: {
-            auto queue = message_queue::MessageQueueV2<int>{};
-            func(queue);
-            break;
-        }
-        default:
-            throw std::runtime_error("Unsupported queue version");
-    }
-}
-
-template <typename T>
-static constexpr bool is_queue_v2_v = std::is_same_v<std::remove_reference_t<T>, message_queue::MessageQueueV2<int>>;
 
 int main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
@@ -73,51 +50,45 @@ int main(int argc, char* argv[]) {
         double test_time = 0;
         int local_max_test_size = 0;
         size_t local_max_active_requests = 0;
-        with_queue(queue_version, [&](auto& queue) {
-            if constexpr (is_queue_v2_v<decltype(queue)>) {
-                if (use_test_any) {
-                    queue.use_test_any();
-                }
+        auto queue = message_queue::MessageQueueV2<int>{};
+        if (use_test_any) {
+            queue.use_test_any();
+        }
+        std::default_random_engine eng;
+        eng.seed(rank);
+        std::bernoulli_distribution bernoulli_dist(0.1);
+        std::uniform_int_distribution<size_t> rank_dist(1, size - 1);
+        // auto queue = message_queue::make_mesqueue<int>(std::move(merger), std::move(splitter));
+        // queue.set_threshold(200);
+        message_queue::PEID receiver = rank_dist(eng);
+        std::vector<int> message(message_size);
+        message[0] = rank;
+        message[1] = 0;
+        for (size_t i = 0; i < number_of_messages; ++i) {
+            message[2] = i;
+            queue.post_message(std::vector<int>(message), (rank + rank_dist(eng)) % size);
+        }
+        auto on_message = [&](auto msg, message_queue::PEID sender, int tag = 0) {
+            if (bernoulli_dist(eng)) {
+                auto begin = msg.begin();
+                std::stringstream ss;
+                ss << "Message " << *(begin + 2) << " from " << *begin << " arrived after " << *(begin + 1) << " hops.";
+                message_queue::atomic_debug(ss.str());
+            } else {
+                KASSERT(msg.size() > 1);
+                msg[1]++;
+                queue.post_message(std::move(msg), (rank + rank_dist(eng)) % size);
             }
-            std::default_random_engine eng;
-            eng.seed(rank);
-            std::bernoulli_distribution bernoulli_dist(0.1);
-            std::uniform_int_distribution<size_t> rank_dist(1, size - 1);
-            // auto queue = message_queue::make_mesqueue<int>(std::move(merger), std::move(splitter));
-            // queue.set_threshold(200);
-            message_queue::PEID receiver = rank_dist(eng);
-            std::vector<int> message(message_size);
-            message[0] = rank;
-            message[1] = 0;
-            for (size_t i = 0; i < number_of_messages; ++i) {
-                message[2] = i;
-                queue.post_message(std::vector<int>(message), (rank + rank_dist(eng)) % size);
-            }
-            auto on_message = [&](auto msg, message_queue::PEID sender, int tag = 0) {
-                if (bernoulli_dist(eng)) {
-                    auto begin = msg.begin();
-                    std::stringstream ss;
-                    ss << "Message " << *(begin + 2) << " from " << *begin << " arrived after " << *(begin + 1)
-                       << " hops.";
-                    message_queue::atomic_debug(ss.str());
-                } else {
-                    KASSERT(msg.size() > 1);
-                    msg[1]++;
-                    queue.post_message(std::move(msg), (rank + rank_dist(eng)) % size);
-                }
-            };
-            queue.poll(on_message);
-            queue.terminate(on_message);
-            if constexpr (is_queue_v2_v<decltype(queue)>) {
-                using namespace std::chrono;
-                wait_all_time = duration_cast<duration<double>>(queue.wait_all_time()).count();
-                test_some_time = duration_cast<duration<double>>(queue.test_some_time()).count();
-                test_any_time = duration_cast<duration<double>>(queue.test_any_time()).count();
-                test_time = duration_cast<duration<double>>(queue.test_time()).count();
-                local_max_test_size = queue.max_test_size();
-                local_max_active_requests = queue.max_active_requests();
-            }
-        });
+        };
+        queue.poll(on_message);
+        queue.terminate(on_message);
+        using namespace std::chrono;
+        wait_all_time = duration_cast<duration<double>>(queue.wait_all_time()).count();
+        test_some_time = duration_cast<duration<double>>(queue.test_some_time()).count();
+        test_any_time = duration_cast<duration<double>>(queue.test_any_time()).count();
+        test_time = duration_cast<duration<double>>(queue.test_time()).count();
+        local_max_test_size = queue.max_test_size();
+        local_max_active_requests = queue.max_active_requests();
         MPI_Barrier(MPI_COMM_WORLD);
         double end = MPI_Wtime();
         double local_times[4] = {wait_all_time, test_some_time, test_any_time, test_time};

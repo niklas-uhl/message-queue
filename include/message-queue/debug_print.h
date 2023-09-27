@@ -8,15 +8,11 @@
 #include <mpi.h>
 #include <unistd.h>
 #include <array>
-#include <cstdlib>
 #include <exception>
 #include <iostream>
-#include <istream>
-#include <iterator>
 #include <ostream>
 #include <sstream>
 #include <string>
-#include <vector>
 
 namespace message_queue {
 using PEID = int;
@@ -77,25 +73,7 @@ inline void check_mpi_error(int errcode, const std::string& file, int line) {
         throw MPIException(msg);
     }
 }
-template <class T>
-inline std::ostream& operator<<(std::ostream& out, const std::vector<T>& v) {
-    if (v.empty()) {
-        out << "[]";
-    } else {
-        out << "[";
-        for (const auto& elem : v) {
-            out << elem << ", ";
-            ;
-        }
-        out << "\b\b]";
-    }
-    return out;
-}
 
-template <class T, class V>
-inline std::ostream& operator<<(std::ostream& out, const std::pair<T, V>& p) {
-    return out << "<" << p.first << ", " << p.second << ">";
-}
 template <class MessageType>
 inline void atomic_debug(MessageType message, std::ostream& out = std::cout, bool newline = true) {
     std::stringstream sout;
