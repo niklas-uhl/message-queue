@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 #include "message-queue/datatype.hpp"
-#include "message-queue/debug_print.h"
+#include "message-queue/debug_print.hpp"
 #include "message-queue/concepts.hpp"
 
 namespace message_queue {

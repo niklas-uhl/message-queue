@@ -8,7 +8,7 @@
 
 #include "message-queue/aggregators.hpp"
 #include "message-queue/concepts.hpp"
-#include "message-queue/queue_v2.h"
+#include "message-queue/queue_v2.hpp"
 
 namespace message_queue {
 

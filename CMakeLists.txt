@@ -14,6 +14,7 @@ set(message_queue_source_files
   src/debug_print.cpp
   src/concepts.cpp
   src/aggregators.cpp
+  src/definitions.cpp
 )
 
 add_library(message-queue ${message_queue_source_files})

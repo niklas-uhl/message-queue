@@ -1,7 +1,7 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
-#include <message-queue/buffered_queue_v2.h>
 #include <CLI/CLI.hpp>
+#include <message-queue/buffered_queue_v2.hpp>
 #include <random>
 #include <range/v3/all.hpp>
 

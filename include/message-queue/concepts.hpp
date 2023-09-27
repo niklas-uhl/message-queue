@@ -4,10 +4,9 @@
 #include <ranges>
 #include <vector>
 #include "message-queue/datatype.hpp"  // IWYU pragma: keep
+#include "message-queue/definitions.hpp"
 
 namespace message_queue {
-
-using PEID = int;
 
 /// @brief a buffer directly sendable by \c std::data() and \c std::size() to an MPI call.
 template <typename Container, typename ValueType = void>

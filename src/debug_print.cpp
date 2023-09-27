@@ -1,4 +1,4 @@
-#include "message-queue/debug_print.h"
+#include "message-queue/debug_print.hpp"
 
 #include <array>
 

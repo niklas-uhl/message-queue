@@ -4,9 +4,9 @@
 #include <random>
 #include <string>
 #include <fmt/format.h>
-#include "message-queue/debug_print.h"
-#include "message-queue/queue_v2.h"
-#include "../tests/testing_helpers.h"
+#include "message-queue/debug_print.hpp"
+#include "message-queue/queue_v2.hpp"
+#include "../tests/testing_helpers.hpp"
 
 int main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
