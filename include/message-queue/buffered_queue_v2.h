@@ -1,4 +1,5 @@
 #pragma once
+#include <mpi.h>
 #include <concepts>
 #include <iostream>
 #include <iterator>
@@ -121,14 +122,21 @@ class BufferedMessageQueueV2 {
 public:
     using BufferMap = std::unordered_map<PEID, BufferContainerType<T>>;
 
-    BufferedMessageQueueV2(size_t num_request_slots = internal::world_size(),
+    BufferedMessageQueueV2(MPI_Comm comm, size_t num_request_slots,
                            Merger&& merger = Merger{},
                            Splitter&& splitter = Splitter{},
                            BufferCleaner&& cleaner = BufferCleaner{})
-        : queue_(num_request_slots),
+        : queue_(comm, num_request_slots),
           merge(std::forward<Merger>(merger)),
           split(std::forward<Splitter>(splitter)),
           pre_send_cleanup(std::forward<BufferCleaner>(cleaner)) {}
+
+    BufferedMessageQueueV2(MPI_Comm comm = MPI_COMM_WORLD,
+                           Merger&& merger = Merger{},
+                           Splitter&& splitter = Splitter{},
+                           BufferCleaner&& cleaner = BufferCleaner{})
+        : BufferedMessageQueueV2(comm, internal::comm_size(comm), std::forward<Merger>(merger),
+                                 std::forward<Splitter>(splitter), std::forward<BufferCleaner>(cleaner)) {}
 
     bool post_message(std::vector<T>&& message, PEID receiver, int tag) {
         size_t estimated_new_buffer_size;
@@ -289,10 +297,10 @@ private:
 template <typename T,
           template <typename...> typename BufferContainerType = std::vector,
           aggregation::BufferCleaner<T, BufferContainerType> Cleaner>
-auto make_buffered_queue_with_cleaner(Cleaner&& cleaner) {
+auto make_buffered_queue_with_cleaner(MPI_Comm comm, Cleaner&& cleaner) {
     return BufferedMessageQueueV2<T, BufferContainerType, aggregation::AppendMerger<T, BufferContainerType>,
                                   aggregation::NoSplitter<T, BufferContainerType>, Cleaner>(
-        internal::world_size(), aggregation::AppendMerger<T, BufferContainerType>{},
+        comm, aggregation::AppendMerger<T, BufferContainerType>{},
         aggregation::NoSplitter<T, BufferContainerType>{}, std::forward<Cleaner>(cleaner));
 }
 

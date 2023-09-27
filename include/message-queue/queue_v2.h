@@ -3,30 +3,23 @@
 #include <fmt/core.h>
 #include <fmt/ranges.h>
 #include <mpi.h>
-#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <deque>
 #include <kassert/kassert.hpp>
 #include <limits>
-#include <memory>
 #include <optional>
-#include <sstream>
-#include <string>
-#include <type_traits>
 #include <utility>
 #include <vector>
-#include "boost/mpi/datatype.hpp"
 #include "debug_print.h"
 #include "message-queue/datatype.hpp"
 #include "message-queue/debug_print.h"
-#include "message-queue/message_statistics.h"
 
 namespace message_queue {
 namespace internal {
-inline size_t world_size() {
+inline size_t comm_size(MPI_Comm comm = MPI_COMM_WORLD) {
     int size;
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_size(comm, &size);
     return static_cast<size_t>(size);
 }
 
@@ -188,8 +181,6 @@ private:
         if (index + 1 > active_range.second) {
             active_range.second = index + 1;
         }
-        int rank;
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     }
 
     void remove_from_active_range(int index) {
@@ -201,8 +192,6 @@ private:
                 active_range.second--;
             }
         }
-        int rank;
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     }
     std::vector<MPI_Request> requests;
     std::vector<int> indices;
@@ -215,73 +204,110 @@ private:
 
 namespace handles {
 template <MPIType S>
-struct MessageHandle {
-    size_t message_size = 0;
-    std::vector<S> message;
-    MPI_Request* request = nullptr;
-    size_t request_id;
-    int tag = MPI_ANY_TAG;
-
+class MessageHandle {
+public:
     bool test() {
-        if (request == nullptr) {
+        if (request_ == nullptr) {
             return false;
         }
         int finished = false;
-        int err = MPI_Test(request, &finished, MPI_STATUS_IGNORE);
+        int err = MPI_Test(request_, &finished, MPI_STATUS_IGNORE);
         check_mpi_error(err, __FILE__, __LINE__);
         if (finished) {
             return true;
         }
         return false;
     }
+
+    void set_request(MPI_Request* req) {
+        request_ = req;
+    }
+
+    int tag() const {
+        return tag_;
+    }
+
+protected:
+    size_t message_size_ = 0;
+    std::vector<S> message_;
+    MPI_Request* request_ = nullptr;
+    size_t request_id_;
+    int tag_ = MPI_ANY_TAG;
 };
 
 template <MPIType S>
-struct SendHandle : MessageHandle<S> {
-    PEID receiver = MPI_ANY_SOURCE;
+class SendHandle : public MessageHandle<S> {
+public:
+    SendHandle(MPI_Comm comm = MPI_COMM_NULL) : MessageHandle<S>(), comm_(comm) {}
 
     void initiate_send() {
-        // atomic_debug(this->request_id);
-        int err = MPI_Isend(this->message.data(), this->message.size(), message_queue::mpi_type_traits<S>::get_type(),
-                            receiver, this->tag, MPI_COMM_WORLD, this->request);
+        // atomic_debug(fmt::format("Isend m={}, receiver={}, tag={}, comm={}", this->message_, receiver_, this->tag_,
+        //                          format(this->comm_)));
+        int err = MPI_Isend(this->message_.data(), this->message_.size(), message_queue::mpi_type_traits<S>::get_type(),
+                            receiver_, this->tag_, this->comm_, this->request_);
         check_mpi_error(err, __FILE__, __LINE__);
     }
+
+    void set_message(std::vector<S> message) {
+        this->message_ = std::move(message);
+    }
+
+    void set_receiver(PEID receiver) {
+        this->receiver_ = receiver;
+    }
+
+    void set_tag(int tag) {
+        this->tag_ = tag;
+    }
+
+    void set_request_id(size_t request_id) {
+        this->request_id_ = request_id;
+    }
+
+    PEID receiver() const {
+        return receiver_;
+    }
+
+private:
+    PEID receiver_ = MPI_ANY_SOURCE;
+    MPI_Comm comm_;
 };
 
 template <MPIType S>
-struct ReceiveHandle : MessageHandle<S> {
-#ifdef MESSAGE_QUEUE_MATCHED_RECV
-    MPI_Message matched_message;
-#endif
-    MPI_Status status;
-    PEID sender = MPI_ANY_SOURCE;
+class ReceiveHandle : public MessageHandle<S> {
+    MPI_Message matched_message_ = MPI_MESSAGE_NO_PROC;
+    MPI_Status status_;
+    PEID sender_ = MPI_ANY_SOURCE;
 
+public:
     void start_receive() {
-        this->message.resize(this->message_size);
-#ifdef MESSAGE_QUEUE_MATCHED_RECV
-        MPI_Imrecv(this->message.data(), this->message.size(), message_queue::mpi_type_traits<S>::get_type(),
-                   &matched_message, this->request);
-#else
-        MPI_Irecv(this->message.data(), this->message.size(), message_queue::mpi_type_traits<S>::get_type(),
-                  this->sender, this->tag, MPI_COMM_WORLD, this->request);
-#endif
+        this->message_.resize(this->message_size_);
+        // atomic_debug(fmt::format("Imrecv msg={}", format(matched_message_)));
+        MPI_Imrecv(this->message_.data(), this->message_.size(), message_queue::mpi_type_traits<S>::get_type(),
+                   &matched_message_, this->request_);
     }
 
     void receive() {
-        this->message.resize(this->message_size);
-#ifdef MESSAGE_QUEUE_MATCHED_RECV
-        MPI_Mrecv(this->message.data(), this->message.size(), message_queue::mpi_type_traits<S>::get_type(),
-                  &this->matched_message, MPI_STATUS_IGNORE);
-#else
-        MPI_Recv(this->message.data(), this->message.size(), message_queue::mpi_type_traits<S>::get_type(),
-                 this->sender, this->tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-#endif
+        this->message_.resize(this->message_size_);
+        // atomic_debug(fmt::format("Mrecv msg={}", format(matched_message_)));
+        MPI_Mrecv(this->message_.data(), this->message_.size(), message_queue::mpi_type_traits<S>::get_type(),
+                  &this->matched_message_, MPI_STATUS_IGNORE);
     }
+
+    PEID sender() const {
+        return sender_;
+    }
+
+    std::vector<S> extract_message() {
+        return std::move(this->message_);
+    }
+    friend struct ProbeResult;
 };
 
 struct ProbeResult {
     MPI_Status status;
     MPI_Message matched_message;
+    MPI_Comm comm;
     PEID sender;
     int tag;
 
@@ -290,27 +316,25 @@ struct ProbeResult {
         ReceiveHandle<S> handle;
         int message_size;
         MPI_Get_count(&status, message_queue::mpi_type_traits<S>::get_type(), &message_size);
-        handle.message_size = message_size;
-#ifdef MESSAGE_QUEUE_MATCHED_RECV
-        handle.matched_message = matched_message;
-#endif
-        handle.tag = status.MPI_TAG;
-        handle.sender = status.MPI_SOURCE;
+        handle.message_size_ = message_size;
+        handle.matched_message_ = matched_message;
+        handle.tag_ = status.MPI_TAG;
+        handle.sender_ = status.MPI_SOURCE;
         return handle;
     }
 };
 
-static std::optional<ProbeResult> probe(PEID source = MPI_ANY_SOURCE, PEID tag = MPI_ANY_TAG) {
+static std::optional<ProbeResult> probe(MPI_Comm comm, PEID source = MPI_ANY_SOURCE, PEID tag = MPI_ANY_TAG) {
     ProbeResult result;
     int message_found = false;
-#ifdef MESSAGE_QUEUE_MATCHED_RECV
-    MPI_Improbe(source, tag, MPI_COMM_WORLD, &message_found, &result.matched_message, &result.status);
-#else
-    MPI_Iprobe(source, tag, MPI_COMM_WORLD, &message_found, &result.status);
-#endif
+    // atomic_debug(fmt::format("Improbe source={}, tag={}, comm={}", format_rank(source), format_tag(tag), format(comm)));
+    MPI_Improbe(source, tag, comm, &message_found, &result.matched_message, &result.status);
     if (message_found) {
+        // atomic_debug(fmt::format("probe succeeded with source={}, tag={}, comm={}, msg", result.status.MPI_SOURCE,
+        //                          result.status.MPI_TAG, format(comm), format(result.matched_message)));
         result.sender = result.status.MPI_SOURCE;
         result.tag = result.status.MPI_TAG;
+        result.comm = comm;
         return result;
     }
     return std::nullopt;
@@ -322,6 +346,10 @@ struct MessageCounter {
     size_t receive;
     auto operator<=>(const MessageCounter&) const = default;
 };
+
+auto format_as(MessageCounter counter) {
+    return fmt::format("{{send={}, receive={}}}", counter.send, counter.receive);
+}
 
 }  // namespace internal
 
@@ -343,11 +371,11 @@ class MessageQueueV2 {
 
     template <typename S>
     void post_message_impl(std::vector<S>&& message, PEID receiver, int tag) {
-        internal::handles::SendHandle<S> handle;
-        handle.message = std::move(message);
-        handle.receiver = receiver;
-        handle.tag = tag;
-        handle.request_id = this->request_id_;
+        internal::handles::SendHandle<S> handle(comm_);
+        handle.set_message(std::move(message));
+        handle.set_receiver(receiver);
+        handle.set_tag(tag);
+        handle.set_request_id(this->request_id_);
         outgoing_message_box.emplace_back(std::move(handle));
         this->request_id_++;
         try_send_something();
@@ -361,30 +389,33 @@ class MessageQueueV2 {
             internal::handles::SendHandle<T> message_to_send = std::move(outgoing_message_box.front());
             outgoing_message_box.pop_front();
             auto [index, req_ptr] = *result;
-            message_to_send.request = req_ptr;
+            message_to_send.set_request(req_ptr);
             // atomic_debug(fmt::format("isend msg={}, to {}, using request {}", message_to_send.message,
             // message_to_send.receiver, index));
             in_transit_messages[index] = std::move(message_to_send);
             in_transit_messages[index].initiate_send();
-            KASSERT(*message_to_send.request != MPI_REQUEST_NULL);
+            // KASSERT(*message_to_send.request_ != MPI_REQUEST_NULL);
             return true;
         }
         return false;
     }
 
 public:
-    MessageQueueV2(size_t num_request_slots = internal::world_size())
+    MessageQueueV2(MPI_Comm comm, size_t num_request_slots)
         : outgoing_message_box(),
           request_pool(num_request_slots),
           in_transit_messages(num_request_slots),
           messages_to_receive(),
           receive_requests(),
           request_id_(0),
+          comm_(comm),
           rank_(0),
           size_(0) {
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank_);
-        MPI_Comm_size(MPI_COMM_WORLD, &size_);
+        MPI_Comm_rank(comm_, &rank_);
+        MPI_Comm_size(comm_, &size_);
     }
+
+    MessageQueueV2(MPI_Comm comm = MPI_COMM_WORLD) : MessageQueueV2(comm, internal::comm_size(comm)) {}
 
     void post_message(std::vector<T>&& message, PEID receiver, int tag = 0) {
         // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));
@@ -410,13 +441,13 @@ public:
             auto start = std::chrono::high_resolution_clock::now();
             if (!use_custom_implementation_) {
                 request_pool.test_some([&](int completed_request_index) {
-                    in_transit_messages[completed_request_index] = {};
+                    in_transit_messages[completed_request_index] = {comm_};
                     something_happenend = true;
                     try_send_something(completed_request_index);
                 });
             } else {
                 request_pool.my_test_some([&](int completed_request_index) {
-                    in_transit_messages[completed_request_index] = {};
+                    in_transit_messages[completed_request_index] = {comm_};
                     something_happenend = true;
                     try_send_something(completed_request_index);
                 });
@@ -430,14 +461,14 @@ public:
                 auto start = std::chrono::high_resolution_clock::now();
                 if (!use_custom_implementation_) {
                     request_pool.test_any([&](int completed_request_index) {
-                        in_transit_messages[completed_request_index] = {};
+                        in_transit_messages[completed_request_index] = {comm_};
                         something_happenend = true;
                         progress = true;
                         try_send_something(completed_request_index);
                     });
                 } else {
                     request_pool.my_test_any([&](int completed_request_index) {
-                        in_transit_messages[completed_request_index] = {};
+                        in_transit_messages[completed_request_index] = {comm_};
                         something_happenend = true;
                         progress = true;
                         try_send_something(completed_request_index);
@@ -454,12 +485,12 @@ public:
 
     bool probe_for_messages(MessageHandler<T, std::vector> auto&& on_message) {
         bool something_happenend = false;
-        while (auto probe_result = internal::handles::probe()) {
+        while (auto probe_result = internal::handles::probe(comm_)) {
             something_happenend = true;
             auto recv_handle = probe_result->template handle<T>();
             // atomic_debug(fmt::format("probed msg from {}", recv_handle.sender));
             MPI_Request recv_req;
-            recv_handle.request = &recv_req;
+            recv_handle.set_request(&recv_req);
             recv_handle.start_receive();
             receive_requests.push_back(recv_req);
             messages_to_receive.emplace_back(std::move(recv_handle));
@@ -472,7 +503,7 @@ public:
         for (auto& handle : messages_to_receive) {
             // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
             local_message_count.receive++;
-            on_message(std::move(handle.message), handle.sender, handle.tag);
+            on_message(handle.extract_message(), handle.sender(), handle.tag());
         }
         messages_to_receive.clear();
         return something_happenend;
@@ -531,10 +562,9 @@ public:
     void start_message_counting() {
         if (termination_request == MPI_REQUEST_NULL) {
             message_count_reduce_buffer = local_message_count;
-            // atomic_debug("Start reduce");
+            // atomic_debug(fmt::format("Start reduce with {}", message_count_reduce_buffer));
             MPI_Iallreduce(MPI_IN_PLACE, &message_count_reduce_buffer, 2,
-                           message_queue::mpi_type_traits<size_t>::get_type(), MPI_SUM, MPI_COMM_WORLD,
-                           &termination_request);
+                           message_queue::mpi_type_traits<size_t>::get_type(), MPI_SUM, comm_, &termination_request);
         }
     }
 
@@ -558,12 +588,15 @@ public:
                 return false;
             }
             start_message_counting();
-            while (!message_counting_finished()) {
+            // poll at least once, so we don't miss any messages
+            // if the the message box is empty upon calling this function
+            // we never get to poll if message counting finishes instantly
+            do {
                 poll(on_message);
                 if (termination_state == TerminationState::active) {
                     return false;
                 }
-            }
+            } while (!message_counting_finished());
             if (check_termination_condition()) {
                 termination_state = TerminationState::terminated;
                 return true;
@@ -625,6 +658,7 @@ private:
     MPI_Request termination_request = MPI_REQUEST_NULL;
     // MessageStatistics stats_;
     size_t request_id_;
+    MPI_Comm comm_;
     PEID rank_;
     PEID size_;
     std::chrono::high_resolution_clock::duration wait_all_time_;

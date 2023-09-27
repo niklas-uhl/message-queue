@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <fmt/format.h>
 #include <mpi.h>
 #include <unistd.h>
 #include <array>
@@ -122,4 +123,44 @@ constexpr unsigned long long log2(unsigned long long x) {
     return log;
 #endif
 }
+
+inline std::string format(MPI_Comm comm) {
+    if (comm == MPI_COMM_WORLD) {
+        return "[WORLD]";
+    } else if (comm == MPI_COMM_NULL) {
+        return "[NULL]";
+    } else {
+        int size;
+        MPI_Comm_size(comm, &size);
+        return fmt::format("[COMM<{}>@{}]", size, fmt::ptr(comm));
+    }
+}
+inline std::string format(MPI_Message msg) {
+    if (msg == MPI_MESSAGE_NULL) {
+        return "[MESSAGE_NULL]";
+    } else if (msg == MPI_MESSAGE_NO_PROC) {
+        return "[MESSAGE_NO_PROC]";
+    } else {
+        return fmt::format("[MESSAGE@{}]", fmt::ptr(msg));
+    }
+}
+
+inline std::string format_rank(int rank) {
+    if (rank == MPI_ANY_SOURCE) {
+        return "ANY_SOURCE";
+    } else if (rank == MPI_PROC_NULL) {
+        return "PROC_NULL";
+    } else {
+        return fmt::format("{}", rank);
+    }
+}
+
+inline std::string format_tag(int tag) {
+    if (tag == MPI_ANY_TAG) {
+        return "ANY_TAG";
+    } else {
+        return fmt::format("{}", tag);
+    }
+}
+
 }  // namespace message_queue

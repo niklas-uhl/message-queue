@@ -8,12 +8,6 @@ auto main(int argc, char* argv[]) -> int {
     CLI::App app;
     app.option_defaults()->always_capture_default();
 
-    size_t global_threshold = std::numeric_limits<size_t>::max();
-    app.add_option("--global_threshold", global_threshold, "The global threshold for the queue");
-
-    size_t local_threshold = std::numeric_limits<size_t>::max();
-    app.add_option("--local_threshold", local_threshold, "The local threshold for the queue");
-
     size_t number_of_messages = 5;
     app.add_option("--number_of_messages", number_of_messages, "The number of messages to send from each PE");
 
@@ -22,24 +16,25 @@ auto main(int argc, char* argv[]) -> int {
     auto printing_cleaner = [](auto& buf, message_queue::PEID receiver) {
         message_queue::atomic_debug(fmt::format("Preparing buffer {} to {}.", buf, receiver));
     };
-    auto queue = message_queue::make_buffered_queue_with_cleaner<int>(MPI_COMM_WORLD, printing_cleaner);
+    auto queue1 = message_queue::make_buffered_queue_with_cleaner<int>(MPI_COMM_WORLD, printing_cleaner);
+    MPI_Comm other_comm;
+    MPI_Comm_dup(MPI_COMM_WORLD, &other_comm);
+    auto queue2 = message_queue::make_buffered_queue_with_cleaner<int>(other_comm, printing_cleaner);
     int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     DEBUG_BARRIER(rank);
     std::mt19937 gen;
     std::uniform_int_distribution<int> dist(0, size - 1);
-    if (global_threshold != std::numeric_limits<size_t>::max()) {
-        queue.global_threshold(global_threshold);
-    }
-    if (local_threshold != std::numeric_limits<size_t>::max()) {
-        queue.local_threshold(local_threshold);
-    }
     for (auto i = 0; i < number_of_messages; ++i) {
         int val = dist(gen);
-        queue.post_message(val, val);
+        queue1.post_message(1, val);
+        queue2.post_message(2, val);
     }
-    queue.terminate([&](auto msg, auto sender, auto tag) {
+    queue2.terminate([&](auto msg, auto sender, auto tag) {
+        message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", msg, sender));
+    });
+    queue1.terminate([&](auto msg, auto sender, auto tag) {
         message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", msg, sender));
     });
     MPI_Finalize();
