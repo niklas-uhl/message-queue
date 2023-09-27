@@ -1,7 +1,5 @@
 #pragma once
 
-#include <fmt/core.h>
-#include <fmt/ranges.h>
 #include <mpi.h>
 #include <chrono>
 #include <cstddef>
