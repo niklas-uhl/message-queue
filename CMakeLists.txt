@@ -15,7 +15,7 @@ set(message_queue_source_files
 add_library(message-queue ${message_queue_source_files})
 target_include_directories(message-queue PUBLIC include)
 target_link_libraries(message-queue PUBLIC MPI::MPI_CXX
-                                              message_queue_boost_dependencies kassert::kassert)
+                                              message_queue_boost_dependencies kassert::kassert range-v3)
 target_compile_features(message-queue PUBLIC cxx_std_20)
 if(MESSAGE_QUEUE_USE_MY_TEST_FUNCTIONS)
   target_compile_definitions(message-queue

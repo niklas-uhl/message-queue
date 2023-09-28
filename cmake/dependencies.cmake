@@ -58,6 +58,7 @@ else()
   target_link_libraries(message_queue_boost_dependencies
                         INTERFACE Boost::mpi Boost::circular_buffer)
 endif()
+cpmaddpackage("gh:ericniebler/range-v3#0.12.0")
 
 if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME OR MESSAGE_QUEUE_BUILD_EXAMPLES)
   cpmaddpackage("gh:CLIUtils/CLI11@2.3.2")

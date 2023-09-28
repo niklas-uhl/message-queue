@@ -5,10 +5,17 @@ target_link_libraries(
 
 add_executable(message_buffering_example message_buffering_example.cpp)
 target_link_libraries(
-  message_buffering_example PUBLIC message-queue CLI11::CLI11
-                                   kassert::kassert fmt::fmt)
+  message_buffering_example PUBLIC message-queue CLI11::CLI11 kassert::kassert
+                                   fmt::fmt)
 
-add_executable(multiple_message_queues_example multiple_message_queues_example.cpp)
+add_executable(multiple_message_queues_example
+               multiple_message_queues_example.cpp)
 target_link_libraries(
   multiple_message_queues_example PUBLIC message-queue CLI11::CLI11
-                                   kassert::kassert fmt::fmt)
+                                         kassert::kassert fmt::fmt)
+
+add_executable(message_buffering_with_disjoint_message_and_buffer_type
+               message_buffering_with_disjoint_message_and_buffer_type.cpp)
+target_link_libraries(
+  message_buffering_with_disjoint_message_and_buffer_type
+  PUBLIC message-queue CLI11::CLI11 kassert::kassert fmt::fmt)
