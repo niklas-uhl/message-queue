@@ -14,6 +14,10 @@
 #include "message-queue/debug_print.h"
 
 namespace message_queue {
+
+template<typename Container>
+concept MPIBuffer = std::ranges::sized_range<Container> && std::ranges::contiguous_range<Container>;
+
 namespace internal {
 size_t comm_size(MPI_Comm comm = MPI_COMM_WORLD);
 
@@ -157,7 +161,8 @@ private:
 };
 
 namespace handles {
-template <MPIType S>
+template <MPIType S, MPIBuffer MessageContainer = std::vector<S>>
+    requires std::same_as<S, typename MessageContainer::value_type>
 class MessageHandle {
 public:
     bool test() {
@@ -183,16 +188,16 @@ public:
 
 protected:
     size_t message_size_ = 0;
-    std::vector<S> message_;
+    MessageContainer message_;
     MPI_Request* request_ = nullptr;
     size_t request_id_;
     int tag_ = MPI_ANY_TAG;
 };
 
-template <MPIType S>
-class SendHandle : public MessageHandle<S> {
+template <MPIType S, MPIBuffer MessageContainer = std::vector<S>>
+class SendHandle : public MessageHandle<S, MessageContainer> {
 public:
-    SendHandle(MPI_Comm comm = MPI_COMM_NULL) : MessageHandle<S>(), comm_(comm) {}
+    SendHandle(MPI_Comm comm = MPI_COMM_NULL) : MessageHandle<S, MessageContainer>(), comm_(comm) {}
 
     void initiate_send() {
         // atomic_debug(fmt::format("Isend m={}, receiver={}, tag={}, comm={}", this->message_, receiver_, this->tag_,
@@ -202,7 +207,7 @@ public:
         check_mpi_error(err, __FILE__, __LINE__);
     }
 
-    void set_message(std::vector<S> message) {
+    void set_message(MessageContainer message) {
         this->message_ = std::move(message);
     }
 
@@ -227,8 +232,8 @@ private:
     MPI_Comm comm_;
 };
 
-template <MPIType S>
-class ReceiveHandle : public MessageHandle<S> {
+template <MPIType S, MPIBuffer MessageContainer = std::vector<S>>
+class ReceiveHandle : public MessageHandle<S, MessageContainer> {
     MPI_Message matched_message_ = MPI_MESSAGE_NO_PROC;
     MPI_Status status_;
     PEID sender_ = MPI_ANY_SOURCE;
@@ -252,7 +257,7 @@ public:
         return sender_;
     }
 
-    std::vector<S> extract_message() {
+    MessageContainer extract_message() {
         return std::move(this->message_);
     }
     friend struct ProbeResult;
@@ -265,9 +270,9 @@ struct ProbeResult {
     PEID sender;
     int tag;
 
-    template <MPIType S>
-    ReceiveHandle<S> handle() {
-        ReceiveHandle<S> handle;
+    template <MPIType S, MPIBuffer MessageContainer = std::vector<S>>
+    ReceiveHandle<S, MessageContainer> handle() {
+        ReceiveHandle<S, MessageContainer> handle;
         int message_size;
         MPI_Get_count(&status, message_queue::mpi_type_traits<S>::get_type(), &message_size);
         handle.message_size_ = message_size;
@@ -281,7 +286,8 @@ struct ProbeResult {
 static std::optional<ProbeResult> probe(MPI_Comm comm, PEID source = MPI_ANY_SOURCE, PEID tag = MPI_ANY_TAG) {
     ProbeResult result;
     int message_found = false;
-    // atomic_debug(fmt::format("Improbe source={}, tag={}, comm={}", format_rank(source), format_tag(tag), format(comm)));
+    // atomic_debug(fmt::format("Improbe source={}, tag={}, comm={}", format_rank(source), format_tag(tag),
+    // format(comm)));
     MPI_Improbe(source, tag, comm, &message_found, &result.matched_message, &result.status);
     if (message_found) {
         // atomic_debug(fmt::format("probe succeeded with source={}, tag={}, comm={}, msg", result.status.MPI_SOURCE,
@@ -303,13 +309,14 @@ struct MessageCounter {
 
 }  // namespace internal
 
-template <typename MessageFunc, typename MessageDataType, template <typename...> typename Container>
+template <typename MessageFunc, typename MessageDataType, typename MessageContainer>
 concept MessageHandler =
-    MPIType<MessageDataType> && requires(MessageFunc f, Container<MessageDataType> message, PEID sender, int tag) {
+    MPIType<MessageDataType> && std::same_as<MessageDataType, typename MessageContainer::value_type> &&
+    requires(MessageFunc f, MessageContainer message, PEID sender, int tag) {
         f(std::move(message), sender, tag);
     };
 
-template <MPIType T>
+template <MPIType T, MPIBuffer MessageContainer = std::vector<T>> requires std::same_as<T, typename MessageContainer::value_type>
 class MessageQueueV2 {
     template <class U, class Merger, class Splitter>
     friend class BufferedMessageQueue;
@@ -319,24 +326,12 @@ class MessageQueueV2 {
 
     enum class State { posted, initiated, completed };
 
-    template <typename S>
-    void post_message_impl(std::vector<S>&& message, PEID receiver, int tag) {
-        internal::handles::SendHandle<S> handle(comm_);
-        handle.set_message(std::move(message));
-        handle.set_receiver(receiver);
-        handle.set_tag(tag);
-        handle.set_request_id(this->request_id_);
-        outgoing_message_box.emplace_back(std::move(handle));
-        this->request_id_++;
-        try_send_something();
-    }
-
     bool try_send_something(int hint = -1) {
         if (outgoing_message_box.empty()) {
             return false;
         }
         if (auto result = request_pool.get_some_inactive_request(hint)) {
-            internal::handles::SendHandle<T> message_to_send = std::move(outgoing_message_box.front());
+            internal::handles::SendHandle<T, MessageContainer> message_to_send = std::move(outgoing_message_box.front());
             outgoing_message_box.pop_front();
             auto [index, req_ptr] = *result;
             message_to_send.set_request(req_ptr);
@@ -367,13 +362,20 @@ public:
 
     MessageQueueV2(MPI_Comm comm = MPI_COMM_WORLD) : MessageQueueV2(comm, internal::comm_size(comm)) {}
 
-    void post_message(std::vector<T>&& message, PEID receiver, int tag = 0) {
+    void post_message(MessageContainer&& message, PEID receiver, int tag = 0) {
         // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));
         // assert(receiver != rank_);
-        if (message.empty()) {
+        if (message.size() == 0) {
             return;
         }
-        post_message_impl(std::move(message), receiver, tag);
+        internal::handles::SendHandle<T, MessageContainer> handle(comm_);
+        handle.set_message(std::move(message));
+        handle.set_receiver(receiver);
+        handle.set_tag(tag);
+        handle.set_request_id(this->request_id_);
+        outgoing_message_box.emplace_back(std::move(handle));
+        this->request_id_++;
+        try_send_something();
         local_message_count.send++;
     }
 
@@ -433,11 +435,11 @@ public:
         return something_happenend;
     }
 
-    bool probe_for_messages(MessageHandler<T, std::vector> auto&& on_message) {
+    bool probe_for_messages(MessageHandler<T, MessageContainer> auto&& on_message) {
         bool something_happenend = false;
         while (auto probe_result = internal::handles::probe(comm_)) {
             something_happenend = true;
-            auto recv_handle = probe_result->template handle<T>();
+            auto recv_handle = probe_result->template handle<T, MessageContainer>();
             // atomic_debug(fmt::format("probed msg from {}", recv_handle.sender));
             MPI_Request recv_req;
             recv_handle.set_request(&recv_req);
@@ -459,7 +461,7 @@ public:
         return something_happenend;
     }
 
-    bool poll(MessageHandler<T, std::vector> auto&& on_message) {
+    bool poll(MessageHandler<T, MessageContainer> auto&& on_message) {
         bool something_happenend = false;
         something_happenend |= progress_sending();
         something_happenend |= probe_for_messages(on_message);
@@ -499,7 +501,7 @@ public:
     }
 
     void poll_until_message_box_empty(
-        MessageHandler<T, std::vector> auto&& on_message,
+        MessageHandler<T, MessageContainer> auto&& on_message,
         std::predicate<> auto&& should_stop_polling = [] { return false; }) {
         while (!outgoing_message_box.empty()) {
             poll(on_message);
@@ -528,7 +530,7 @@ public:
         return reduce_finished;
     }
 
-    bool terminate(MessageHandler<T, std::vector> auto&& on_message,
+    bool terminate(MessageHandler<T, MessageContainer> auto&& on_message,
                    std::invocable<> auto&& before_next_message_counting_round_hook) {
         termination_state = TerminationState::trying_termination;
         while (true) {
@@ -554,7 +556,7 @@ public:
         }
     }
 
-    bool terminate(MessageHandler<T, std::vector> auto&& on_message) {
+    bool terminate(MessageHandler<T, MessageContainer> auto&& on_message) {
         return terminate(on_message, [] {});
     }
 
@@ -596,10 +598,10 @@ public:
 
 private:
     enum class TerminationState { active, trying_termination, terminated };
-    std::deque<internal::handles::SendHandle<T>> outgoing_message_box;
+    std::deque<internal::handles::SendHandle<T, MessageContainer>> outgoing_message_box;
     internal::RequestPool request_pool;
-    std::vector<internal::handles::SendHandle<T>> in_transit_messages;
-    std::vector<internal::handles::ReceiveHandle<T>> messages_to_receive;
+    std::vector<internal::handles::SendHandle<T, MessageContainer>> in_transit_messages;
+    std::vector<internal::handles::ReceiveHandle<T, MessageContainer>> messages_to_receive;
     std::vector<MPI_Request> receive_requests;
     internal::MessageCounter local_message_count = {0, 0};
     internal::MessageCounter message_count_reduce_buffer;

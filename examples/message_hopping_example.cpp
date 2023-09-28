@@ -6,6 +6,7 @@
 #include <fmt/format.h>
 #include "message-queue/debug_print.h"
 #include "message-queue/queue_v2.h"
+#include "../tests/testing_helpers.h"
 
 int main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
@@ -51,7 +52,12 @@ int main(int argc, char* argv[]) {
         double test_time = 0;
         int local_max_test_size = 0;
         size_t local_max_active_requests = 0;
-        auto queue = message_queue::MessageQueueV2<int>{};
+
+        using MessageContainer = std::vector<int>;
+        // using MessageContainer = message_queue::testing::OwnContainer<int>;
+        // using MessageContainer = std::vector<int, message_queue::testing::CustomAllocator<int>>;
+
+        auto queue = message_queue::MessageQueueV2<int, MessageContainer>{};
         if (use_test_any) {
             queue.use_test_any();
         }
@@ -62,12 +68,12 @@ int main(int argc, char* argv[]) {
         // auto queue = message_queue::make_mesqueue<int>(std::move(merger), std::move(splitter));
         // queue.set_threshold(200);
         message_queue::PEID receiver = rank_dist(eng);
-        std::vector<int> message(message_size);
+        MessageContainer message(message_size);
         message[0] = rank;
         message[1] = 0;
         for (size_t i = 0; i < number_of_messages; ++i) {
             message[2] = i;
-            queue.post_message(std::vector<int>(message), (rank + rank_dist(eng)) % size);
+            queue.post_message(MessageContainer(message), (rank + rank_dist(eng)) % size);
         }
         auto on_message = [&](auto msg, message_queue::PEID sender, int tag = 0) {
             if (bernoulli_dist(eng)) {
