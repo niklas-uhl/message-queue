@@ -4,7 +4,6 @@
 
 #pragma once
 
-#include <fmt/format.h>
 #include <mpi.h>
 #include <unistd.h>
 #include <array>
@@ -110,7 +109,11 @@ inline std::string format(MPI_Comm comm) {
     } else {
         int size;
         MPI_Comm_size(comm, &size);
-        return fmt::format("[COMM<{}>@{}]", size, fmt::ptr(comm));
+        std::stringstream ss;
+        ss << "[COMM<" << size << ">@";
+        ss << reinterpret_cast<void*>(comm);
+        ss << "]";
+        return ss.str();
     }
 }
 inline std::string format(MPI_Message msg) {
@@ -119,7 +122,11 @@ inline std::string format(MPI_Message msg) {
     } else if (msg == MPI_MESSAGE_NO_PROC) {
         return "[MESSAGE_NO_PROC]";
     } else {
-        return fmt::format("[MESSAGE@{}]", fmt::ptr(msg));
+        std::stringstream ss;
+        ss << "[MESSAGE@";
+        ss << reinterpret_cast<void*>(msg);
+        ss << "]";
+        return ss.str();
     }
 }
 
@@ -129,7 +136,7 @@ inline std::string format_rank(int rank) {
     } else if (rank == MPI_PROC_NULL) {
         return "PROC_NULL";
     } else {
-        return fmt::format("{}", rank);
+        return std::to_string(rank);
     }
 }
 
@@ -137,7 +144,7 @@ inline std::string format_tag(int tag) {
     if (tag == MPI_ANY_TAG) {
         return "ANY_TAG";
     } else {
-        return fmt::format("{}", tag);
+        return std::to_string(tag);
     }
 }
 

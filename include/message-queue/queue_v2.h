@@ -345,10 +345,6 @@ struct MessageCounter {
     auto operator<=>(const MessageCounter&) const = default;
 };
 
-auto format_as(MessageCounter counter) {
-    return fmt::format("{{send={}, receive={}}}", counter.send, counter.receive);
-}
-
 }  // namespace internal
 
 template <typename MessageFunc, typename MessageDataType, template <typename...> typename Container>

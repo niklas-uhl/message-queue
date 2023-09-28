@@ -3,6 +3,7 @@
 #include <iostream>
 #include <random>
 #include <string>
+#include <fmt/format.h>
 #include "message-queue/debug_print.h"
 #include "message-queue/queue_v2.h"
 
