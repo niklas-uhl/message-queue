@@ -7,14 +7,19 @@ option(MESSAGE_QUEUE_USE_MY_TEST_FUNCTIONS
 
 include(cmake/dependencies.cmake)
 
-add_library(message-queue INTERFACE)
-target_include_directories(message-queue INTERFACE include)
-target_link_libraries(message-queue INTERFACE MPI::MPI_CXX
+set(message_queue_source_files
+  src/queue_v2.cpp
+  src/buffered_queue_v2.cpp
+)
+
+add_library(message-queue ${message_queue_source_files})
+target_include_directories(message-queue PUBLIC include)
+target_link_libraries(message-queue PUBLIC MPI::MPI_CXX
                                               message_queue_boost_dependencies kassert::kassert)
-target_compile_features(message-queue INTERFACE cxx_std_20)
+target_compile_features(message-queue PUBLIC cxx_std_20)
 if(MESSAGE_QUEUE_USE_MY_TEST_FUNCTIONS)
   target_compile_definitions(message-queue
-                             INTERFACE MESSAGE_QUEUE_USE_MY_TEST_FUNCTIONS)
+                             PUBLIC MESSAGE_QUEUE_USE_MY_TEST_FUNCTIONS)
 endif()
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION
                                             VERSION_LESS 12.0)

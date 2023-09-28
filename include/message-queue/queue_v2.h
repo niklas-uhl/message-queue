@@ -15,57 +15,13 @@
 
 namespace message_queue {
 namespace internal {
-inline size_t comm_size(MPI_Comm comm = MPI_COMM_WORLD) {
-    int size;
-    MPI_Comm_size(comm, &size);
-    return static_cast<size_t>(size);
-}
+size_t comm_size(MPI_Comm comm = MPI_COMM_WORLD);
 
 class RequestPool {
 public:
     RequestPool(std::size_t capacity = 0) : requests(capacity, MPI_REQUEST_NULL), indices(capacity) {}
 
-    std::optional<std::pair<int, MPI_Request*>> get_some_inactive_request(int hint = -1) {
-        if (inactive_requests() == 0) {
-            return {};
-        }
-
-        // first check the hinted position
-        if (hint >= 0 && hint < capacity() && requests[hint] == MPI_REQUEST_NULL) {
-            add_to_active_range(hint);
-            track_max_active_requests();
-            return {{hint, &requests[hint]}};
-        }
-
-        // first try to find a request in the active range if there is one
-        if (active_requests_ < active_range.second - active_range.first) {
-            for (auto i = active_range.first; i < active_range.second; i++) {
-                if (requests[i] == MPI_REQUEST_NULL) {
-                    add_to_active_range(i);
-                    track_max_active_requests();
-                    return {{i, &requests[i]}};
-                }
-            }
-        }
-        // search right of the active range
-        for (auto i = active_range.second; i < capacity(); i++) {
-            if (requests[i] == MPI_REQUEST_NULL) {
-                add_to_active_range(i);
-                track_max_active_requests();
-                return {{i, &requests[i]}};
-            }
-        }
-        // search left of the active range starting at active_range.first
-        for (auto i = active_range.first - 1; i >= 0; i--) {
-            if (requests[i] == MPI_REQUEST_NULL) {
-                add_to_active_range(i);
-                track_max_active_requests();
-                return {{i, &requests[i]}};
-            }
-        }
-        // this should never happen
-        return {};
-    }
+    std::optional<std::pair<int, MPI_Request*>> get_some_inactive_request(int hint = -1);
 
     template <typename CompletionFunction>
     void test_some(CompletionFunction&& on_complete = [](int) {}) {
