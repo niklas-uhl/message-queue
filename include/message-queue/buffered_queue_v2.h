@@ -46,11 +46,7 @@ template <typename Range, typename T>
 concept SplitRange =
     std::ranges::forward_range<Range> && Pair<std::ranges::range_value_t<Range>> &&
     std::same_as<int, typename std::ranges::range_value_t<Range>::first_type> &&
-    // #if defined(MESSAGE_QUEUE_GCC_11_SPLIT_VIEW_BUG)
     std::ranges::forward_range<typename std::ranges::range_value_t<Range>::second_type> &&
-    // #else
-    //     std::ranges::contiguous_range<typename std::ranges::range_value_t<Range>::second_type> &&
-    // #endif
     std::same_as<T, std::ranges::range_value_t<typename std::ranges::range_value_t<Range>::second_type>>;
 
 template <typename SplitterType, typename MessageType, typename BufferContainer>
