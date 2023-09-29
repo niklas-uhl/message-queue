@@ -1,13 +1,12 @@
 #pragma once
+
 #include <mpi.h>
-#include <concepts>
-#include <iostream>
+#include <algorithm>
 #include <iterator>
-#include <random>
 #include <ranges>
+#include <unordered_map>
 #include <vector>
 
-#include "message-queue/datatype.hpp"
 #include "message-queue/queue_v2.h"
 
 namespace message_queue {
@@ -49,7 +48,7 @@ concept SplitRange =
 
 template <typename SplitterType, typename MessageType, typename BufferContainer>
 concept Splitter = requires(SplitterType split, BufferContainer const& buffer) {
-    { split(buffer) } ;//-> SplitRange<MessageType>;
+    { split(buffer) } -> SplitRange<MessageType>;
 };
 
 template <typename BufferCleanerType, typename BufferContainer>
@@ -315,8 +314,8 @@ template <typename MessageType,
           aggregation::BufferCleaner<BufferContainer> Cleaner>
 auto make_buffered_queue_with_cleaner(MPI_Comm comm, Cleaner cleaner) {
     return BufferedMessageQueueV2<MessageType, BufferType, MessageContainer, BufferContainer, aggregation::AppendMerger,
-                                  aggregation::NoSplitter, Cleaner>(
-        comm, aggregation::AppendMerger{}, aggregation::NoSplitter{}, std::move(cleaner));
+                                  aggregation::NoSplitter, Cleaner>(comm, aggregation::AppendMerger{},
+                                                                    aggregation::NoSplitter{}, std::move(cleaner));
 }
 
 template <typename MessageType,
@@ -327,9 +326,9 @@ template <typename MessageType,
           aggregation::Splitter<MessageType, BufferContainer> Splitter = aggregation::NoSplitter,
           aggregation::BufferCleaner<BufferContainer> BufferCleaner = aggregation::NoOpCleaner>
 auto make_buffered_queue(MPI_Comm comm = MPI_COMM_WORLD,
-                       Merger merger = Merger{},
-                       Splitter splitter = Splitter{},
-                       BufferCleaner cleaner = BufferCleaner{}) {
+                         Merger merger = Merger{},
+                         Splitter splitter = Splitter{},
+                         BufferCleaner cleaner = BufferCleaner{}) {
     return BufferedMessageQueueV2<MessageType, BufferType, MessageContainer, BufferContainer, Merger, Splitter,
                                   BufferCleaner>(comm, std::move(merger), std::move(splitter), std::move(cleaner));
 }

@@ -7,6 +7,7 @@
 #include <kassert/kassert.hpp>
 #include <limits>
 #include <optional>
+#include <ranges> // IWYU pragma: keep
 #include <utility>
 #include <vector>
 #include "debug_print.h"
@@ -15,7 +16,7 @@
 
 namespace message_queue {
 
-template<typename Container>
+template <typename Container>
 concept MPIBuffer = std::ranges::sized_range<Container> && std::ranges::contiguous_range<Container>;
 
 namespace internal {
@@ -312,11 +313,10 @@ struct MessageCounter {
 template <typename MessageFunc, typename MessageDataType, typename MessageContainer>
 concept MessageHandler =
     MPIType<MessageDataType> && std::same_as<MessageDataType, typename MessageContainer::value_type> &&
-    requires(MessageFunc f, MessageContainer message, PEID sender, int tag) {
-        f(std::move(message), sender, tag);
-    };
+    requires(MessageFunc f, MessageContainer message, PEID sender, int tag) { f(std::move(message), sender, tag); };
 
-template <MPIType T, MPIBuffer MessageContainer = std::vector<T>> requires std::same_as<T, typename MessageContainer::value_type>
+template <MPIType T, MPIBuffer MessageContainer = std::vector<T>>
+    requires std::same_as<T, typename MessageContainer::value_type>
 class MessageQueueV2 {
     template <class U, class Merger, class Splitter>
     friend class BufferedMessageQueue;
@@ -331,7 +331,8 @@ class MessageQueueV2 {
             return false;
         }
         if (auto result = request_pool.get_some_inactive_request(hint)) {
-            internal::handles::SendHandle<T, MessageContainer> message_to_send = std::move(outgoing_message_box.front());
+            internal::handles::SendHandle<T, MessageContainer> message_to_send =
+                std::move(outgoing_message_box.front());
             outgoing_message_box.pop_front();
             auto [index, req_ptr] = *result;
             message_to_send.set_request(req_ptr);

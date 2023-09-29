@@ -58,7 +58,16 @@ else()
   target_link_libraries(message_queue_boost_dependencies
                         INTERFACE Boost::mpi Boost::circular_buffer)
 endif()
-cpmaddpackage("gh:ericniebler/range-v3#0.12.0")
+cpmaddpackage(
+  NAME range-v3
+  URL https://github.com/ericniebler/range-v3/archive/0.12.0.zip
+  VERSION 0.12.0
+  DOWNLOAD_ONLY TRUE)
+if (range-v3_ADDED)
+  add_library(range-v3 INTERFACE IMPORTED)
+  target_include_directories(range-v3 INTERFACE ${range-v3_SOURCE_DIR}/include)
+  add_library(range-v3::range-v3 ALIAS range-v3)
+endif()
 
 if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME OR MESSAGE_QUEUE_BUILD_EXAMPLES)
   cpmaddpackage("gh:CLIUtils/CLI11@2.3.2")
@@ -79,6 +88,6 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME OR MESSAGE_QUEUE_BUILD_EXAMPLES)
   find_package(Sanitizers)
 
   if(MESSAGE_QUEUE_BACKTRACE)
-    cpmaddpackage("gh:kamping-site/bakward-mpi#a032e21")
+    cpmaddpackage("gh:kamping-site/bakward-mpi#89de113")
   endif()
 endif()

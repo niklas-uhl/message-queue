@@ -10,6 +10,8 @@ include(cmake/dependencies.cmake)
 set(message_queue_source_files
   src/queue_v2.cpp
   src/buffered_queue_v2.cpp
+  src/datatype.cpp
+  src/debug_print.cpp
 )
 
 add_library(message-queue ${message_queue_source_files})
