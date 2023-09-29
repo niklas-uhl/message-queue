@@ -21,17 +21,22 @@ auto main(int argc, char* argv[]) -> int {
 
     CLI11_PARSE(app, argc, argv);
 
-    auto merge = [](auto& buf, std::vector<std::pair<int, int>> const& msg, int tag) {
+    auto merge = [](auto& buf, auto const& msg, int tag) {
+        if (!buf.empty()) {
+            buf.emplace_back(-1);
+        }
+        buf.emplace_back(tag);
         for (auto elem : msg) {
-            buf.emplace_back(tag);
             buf.emplace_back(elem.first);
             buf.emplace_back(elem.second);
         }
     };
     auto split = [](std::vector<int> const& buf) {
-        // return std::views::single(std::make_pair(0, std::vector {std::make_pair(0, 0) }));
-        return buf | ranges::views::chunk(3) | ranges::views::transform([](auto&& chunk) {
-            return std::make_pair(chunk[0], std::vector{std::make_pair(chunk[1], chunk[2])});
+        return buf | std::ranges::views::split(-1) | std::ranges::views::transform([](auto&& chunk) {
+            int tag = chunk[0];
+            auto message = chunk | ranges::views::drop(1) | ranges::views::chunk(2) |
+                std::ranges::views::transform([](auto&& chunk) { return std::make_pair(chunk[0], chunk[1]); });
+            return std::make_pair(tag, std::move(message));
         });
     };
     auto printing_cleaner = [](auto& buf, message_queue::PEID receiver) {
@@ -44,6 +49,7 @@ auto main(int argc, char* argv[]) -> int {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     std::mt19937 gen;
     std::uniform_int_distribution<int> dist(0, size - 1);
+    std::uniform_int_distribution<int> message_size_dist(1, 10);
     if (global_threshold != std::numeric_limits<size_t>::max()) {
         queue.global_threshold(global_threshold);
     }
@@ -51,9 +57,14 @@ auto main(int argc, char* argv[]) -> int {
         queue.local_threshold(local_threshold);
     }
     for (auto i = 0; i < number_of_messages; ++i) {
-        int val = dist(gen);
-        queue.post_message(std::pair {42, val}, val, rank);
+        int destination = dist(gen);
+        int message_size = message_size_dist(gen);
+        auto message = ranges::views::ints(1, message_size) | std::views::transform([](int i) {
+            return std::pair(i, 42);
+        }) | ranges::to<std::vector>();
+        queue.post_message(std::move(message), destination, rank);
     }
+    queue.post_message(std::pair{0, 0}, 0);
     queue.terminate([&](auto msg, auto sender, auto tag) {
         message_queue::atomic_debug(fmt::format("Message {} (tag={}) from {} arrived.", msg, tag, sender));
     });

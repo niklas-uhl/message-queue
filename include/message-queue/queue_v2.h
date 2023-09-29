@@ -7,7 +7,7 @@
 #include <kassert/kassert.hpp>
 #include <limits>
 #include <optional>
-#include <ranges> // IWYU pragma: keep
+#include <ranges>  // IWYU pragma: keep
 #include <utility>
 #include <vector>
 #include "debug_print.h"
@@ -310,10 +310,12 @@ struct MessageCounter {
 
 }  // namespace internal
 
-template <typename MessageFunc, typename MessageDataType, typename MessageContainer>
-concept MessageHandler =
-    MPIType<MessageDataType> && std::same_as<MessageDataType, typename MessageContainer::value_type> &&
-    requires(MessageFunc f, MessageContainer message, PEID sender, int tag) { f(std::move(message), sender, tag); };
+template <typename MessageFunc,
+          typename MessageDataType,
+          typename MessageContainerType = std::ranges::empty_view<MessageDataType>>
+concept MessageHandler = MPIType<MessageDataType> && requires(MessageFunc f, MessageContainerType msg, PEID sender, int tag) {
+    f(msg, sender, tag);
+};
 
 template <MPIType T, MPIBuffer MessageContainer = std::vector<T>>
     requires std::same_as<T, typename MessageContainer::value_type>
@@ -383,7 +385,7 @@ public:
     void post_message(T message, PEID receiver, int tag = 0) {
         // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));
         // assert(receiver != rank_);
-        std::vector message_vector{std::move(message)};
+        MessageContainer message_vector{std::move(message)};
         post_message(std::move(message_vector), receiver, tag);
     }
 
