@@ -11,30 +11,63 @@
 
 namespace message_queue {
 
-template <typename Range, typename MessageType>
-concept MessageRange = std::ranges::input_range<Range> && std::ranges::sized_range<Range> &&
-    std::same_as<MessageType, std::ranges::range_value_t<Range>>;
+template <typename Range>
+concept MessageRange = std::ranges::input_range<Range> && std::ranges::sized_range<Range>;
 
-static_assert(MessageRange<std::vector<int>, int>);
-static_assert(MessageRange<std::ranges::single_view<int>, int>);
-static_assert(MessageRange<std::ranges::empty_view<int>, int>);
+template <typename Range, typename MessageType>
+concept TypedMessageRange = MessageRange<Range> && std::same_as<MessageType, std::ranges::range_value_t<Range>>;
+
+static_assert(TypedMessageRange<std::vector<int>, int>);
+static_assert(TypedMessageRange<std::ranges::single_view<int>, int>);
+static_assert(TypedMessageRange<std::ranges::empty_view<int>, int>);
+
+template <typename E, typename MessageType>
+concept Envelope = requires(E envelope) {
+    { envelope.tag } -> std::same_as<int&>;
+    { envelope.message } -> TypedMessageRange<MessageType>;
+} && TypedMessageRange<typename E::message_range_type, MessageType>;
+
+enum class EnvelopeType { tag, full };
+
+template <MessageRange MessageRangeType>
+struct TagEnvelope {
+    using message_range_type = MessageRangeType;
+    using message_value_type = std::ranges::range_value_t<message_range_type>;
+    static constexpr EnvelopeType type = EnvelopeType::tag;
+    int tag;
+    MessageRangeType message;
+};
+static_assert(Envelope<TagEnvelope<std::vector<int>>, int>);
+
+template <MessageRange MessageRangeType>
+struct FullEnvelope {
+    using message_range_type = MessageRangeType;
+    using message_value_type = std::ranges::range_value_t<message_range_type>;
+    static constexpr EnvelopeType type = EnvelopeType::full;
+    int tag;
+    PEID sender;
+    PEID receiver;
+    MessageRangeType message;
+};
+static_assert(Envelope<FullEnvelope<std::vector<int>>, int>);
 
 namespace aggregation {
 
-template <class P>
-concept Pair = requires(P p) {
-    typename P::first_type;
-    typename P::second_type;
-    p.first;
-    p.second;
-    { p.first } -> std::same_as<typename P::first_type&>;
-    { p.second } -> std::same_as<typename P::second_type&>;
-};
+template <typename MergerType, typename MessageType, typename BufferContainer>
+concept TagEnvelopeMerger =
+    requires(MergerType merge, BufferContainer& buffer, TagEnvelope<std::ranges::empty_view<MessageType>> envelope) {
+        merge(buffer, envelope);
+    };
 
 template <typename MergerType, typename MessageType, typename BufferContainer>
-concept Merger = requires(MergerType merge, BufferContainer& buffer, int tag) {
-    merge(buffer, std::ranges::views::empty<MessageType>, tag);
-};
+concept FullEnvelopeMerger =
+    requires(MergerType merge, BufferContainer& buffer, FullEnvelope<std::ranges::empty_view<MessageType>> envelope) {
+        merge(buffer, envelope);
+    };
+
+template <typename MergerType, typename MessageType, typename BufferContainer>
+concept Merger = TagEnvelopeMerger<MergerType, MessageType, BufferContainer> ||
+                 FullEnvelopeMerger<MergerType, MessageType, BufferContainer>;
 
 template <typename MergerType, typename MessageType, typename BufferContainer>
 concept EstimatingMerger =
@@ -43,16 +76,15 @@ concept EstimatingMerger =
     };
 
 template <typename Range, typename T>
-concept SplitRange =
-    std::ranges::forward_range<Range> && Pair<std::ranges::range_value_t<Range>> &&
-    std::same_as<int, typename std::ranges::range_value_t<Range>::first_type> &&
-    std::ranges::forward_range<typename std::ranges::range_value_t<Range>::second_type> &&
-    std::same_as<T, std::ranges::range_value_t<typename std::ranges::range_value_t<Range>::second_type>>;
+concept SplitRange = std::ranges::forward_range<Range> && Envelope<std::ranges::range_value_t<Range>, T>;
 
 template <typename SplitterType, typename MessageType, typename BufferContainer>
 concept Splitter = requires(SplitterType split, BufferContainer const& buffer) {
     { split(buffer) } -> SplitRange<MessageType>;
 };
+
+template<typename Merger, typename Splitter>
+static constexpr bool merger_and_splitter_use_same_envelope = true;
 
 template <typename BufferCleanerType, typename BufferContainer>
 concept BufferCleaner = requires(BufferCleanerType pre_send_cleanup, BufferContainer& buffer, PEID receiver) {
@@ -61,8 +93,8 @@ concept BufferCleaner = requires(BufferCleanerType pre_send_cleanup, BufferConta
 
 struct AppendMerger {
     template <typename MessageContainer, typename BufferContainer>
-    void operator()(BufferContainer& buffer, MessageContainer const& message, int tag) const {
-        buffer.insert(std::end(buffer), std::begin(message), std::end(message));
+    void operator()(BufferContainer& buffer, TagEnvelope<MessageContainer> const& envelope) const {
+        buffer.insert(std::end(buffer), std::begin(envelope.message), std::end(envelope.message));
     }
     template <typename MessageContainer, typename BufferContainer>
     size_t estimate_new_buffer_size(BufferContainer& buffer, MessageContainer const& message, int tag) const {
@@ -74,7 +106,7 @@ static_assert(EstimatingMerger<AppendMerger, std::vector<int>, std::vector<int>>
 struct NoSplitter {
     template <typename BufferContainer>
     auto operator()(BufferContainer const& buffer) const {
-        return std::ranges::single_view(std::make_pair(0, buffer));
+        return std::ranges::single_view(TagEnvelope{0, buffer});
     }
 };
 static_assert(Splitter<NoSplitter, int, std::vector<int>>);
@@ -85,8 +117,8 @@ struct SentinelMerger {
 
     template <typename MessageContainer, typename BufferContainer>
         requires std::same_as<BufferType, typename BufferContainer::value_type>
-    void operator()(BufferContainer& buffer, MessageContainer const& message, int tag) const {
-        buffer.insert(std::end(buffer), std::begin(message), std::end(message));
+    void operator()(BufferContainer& buffer, TagEnvelope<MessageContainer> const& envelope) const {
+        buffer.insert(std::end(buffer), std::begin(envelope.message), std::end(envelope.message));
         buffer.push_back(sentinel_);
     }
     template <typename MessageContainer, typename BufferContainer>
@@ -105,8 +137,9 @@ struct SentinelSplitter {
     template <typename BufferContainer>
         requires std::same_as<BufferType, typename BufferContainer::value_type>
     auto operator()(BufferContainer const& buffer) const {
-        return std::views::split(buffer, sentinel_) |
-               std::views::transform([](auto&& range) { return std::make_pair(0, std::move(range)); });
+        return std::views::split(buffer, sentinel_) | std::views::transform([](auto&& range) {
+                   return TagEnvelope{0, std::move(range)};
+               });
     }
     BufferType sentinel_;
 };
@@ -122,7 +155,6 @@ static_assert(BufferCleaner<NoOpCleaner, std::vector<int>>);
 }  // namespace aggregation
 
 enum class FlushStrategy { local, global, random, largest };
-
 
 template <typename MessageType,
           MPIType BufferType = MessageType,
@@ -165,7 +197,7 @@ public:
                                  std::move(splitter),
                                  std::move(cleaner)) {}
 
-    bool post_message(MessageRange<MessageType> auto const& message, PEID receiver, int tag = 0) {
+    bool post_message(TypedMessageRange<MessageType> auto const& message, PEID receiver, int tag = 0) {
         size_t estimated_new_buffer_size;
         if constexpr (aggregation::EstimatingMerger<Merger, MessageType, BufferContainer>) {
             estimated_new_buffer_size = merge.estimate_new_buffer_size(buffers_[receiver], message, tag);
@@ -178,7 +210,13 @@ public:
             flush_buffer(receiver);
             overflow = true;
         }
-        merge(buffers_[receiver], message, tag);
+        static constexpr EnvelopeType envelope_type = std::ranges::range_value_t<decltype(split(std::declval<BufferContainer>()))>::type;
+        if constexpr (envelope_type == EnvelopeType::tag) {
+            merge(buffers_[receiver], TagEnvelope{tag, std::move(message)});
+        } else if constexpr (envelope_type == EnvelopeType::full) {
+            PEID rank;
+            merge(buffers_[receiver], FullEnvelope{tag, queue_.rank(), receiver, std::move(message)});
+        }
         auto new_buffer_size = buffers_[receiver].size();
         global_buffer_size_ += new_buffer_size - old_buffer_size;
         return overflow;
@@ -236,7 +274,7 @@ public:
     }
 
     bool terminate(MessageHandler<MessageType> auto&& on_message) {
-        auto split_on_message = [&](MessageRange<BufferType> auto message, PEID sender, int /*tag*/) {
+        auto split_on_message = [&](TypedMessageRange<BufferType> auto message, PEID sender, int /*tag*/) {
             for (auto&& [tag, message] : split(message)) {
                 on_message(std::move(message), sender, tag);
             }

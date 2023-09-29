@@ -21,12 +21,13 @@ auto main(int argc, char* argv[]) -> int {
 
     CLI11_PARSE(app, argc, argv);
 
-    auto merge = [](auto& buf, auto const& msg, int tag) {
+    auto merge = [](auto& buf, auto const& msg) {
         if (!buf.empty()) {
             buf.emplace_back(-1);
         }
-        buf.emplace_back(tag);
-        for (auto elem : msg) {
+        buf.emplace_back(msg.tag);
+        msg.sender;
+        for (auto elem : msg.message) {
             buf.emplace_back(elem.first);
             buf.emplace_back(elem.second);
         }
@@ -36,7 +37,7 @@ auto main(int argc, char* argv[]) -> int {
             int tag = chunk[0];
             auto message = chunk | ranges::views::drop(1) | ranges::views::chunk(2) |
                 std::ranges::views::transform([](auto&& chunk) { return std::make_pair(chunk[0], chunk[1]); });
-            return std::make_pair(tag, std::move(message));
+            return message_queue::FullEnvelope{tag, 0, 0, std::move(message)};
         });
     };
     auto printing_cleaner = [](auto& buf, message_queue::PEID receiver) {
