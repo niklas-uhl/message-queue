@@ -11,6 +11,12 @@
 
 namespace message_queue {
 
+template <typename Container>
+concept MessageContainerType =
+    std::ranges::range<Container> && requires(std::ranges::range_value_t<Container> value_type) {
+        { Container{value_type} };
+    };
+
 namespace aggregation {
 
 template <class P>
@@ -122,11 +128,13 @@ enum class FlushStrategy { local, global, random, largest };
 
 template <typename MessageType,
           MPIType BufferType = MessageType,
-          typename MessageContainer = std::vector<MessageType>,
-          typename BufferContainer = std::vector<BufferType>,
+          MessageContainerType MessageContainer = std::vector<MessageType>,
+          MPIBuffer BufferContainer = std::vector<BufferType>,
           aggregation::Merger<MessageContainer, BufferContainer> Merger = aggregation::AppendMerger,
           aggregation::Splitter<MessageType, BufferContainer> Splitter = aggregation::NoSplitter,
           aggregation::BufferCleaner<BufferContainer> BufferCleaner = aggregation::NoOpCleaner>
+    requires std::same_as<MessageType, std::ranges::range_value_t<MessageContainer>> &&
+             std::same_as<BufferType, std::ranges::range_value_t<BufferContainer>>
 class BufferedMessageQueueV2 {
 public:
     using BufferMap = std::unordered_map<PEID, BufferContainer>;
@@ -309,11 +317,13 @@ private:
 
 template <typename MessageType,
           MPIType BufferType = MessageType,
-          typename MessageContainer = std::vector<MessageType>,
-          typename BufferContainer = std::vector<BufferType>,
+          MessageContainerType MessageContainer = std::vector<MessageType>,
+          MPIBuffer BufferContainer = std::vector<BufferType>,
           aggregation::Merger<MessageContainer, BufferContainer> Merger = aggregation::AppendMerger,
           aggregation::Splitter<MessageType, BufferContainer> Splitter = aggregation::NoSplitter,
           aggregation::BufferCleaner<BufferContainer> BufferCleaner = aggregation::NoOpCleaner>
+    requires std::same_as<MessageType, std::ranges::range_value_t<MessageContainer>> &&
+             std::same_as<BufferType, std::ranges::range_value_t<BufferContainer>>
 auto make_buffered_queue(MPI_Comm comm = MPI_COMM_WORLD,
                          Merger merger = Merger{},
                          Splitter splitter = Splitter{},
@@ -324,10 +334,12 @@ auto make_buffered_queue(MPI_Comm comm = MPI_COMM_WORLD,
 
 template <typename MessageType,
           MPIType BufferType = MessageType,
-          typename MessageContainer = std::vector<MessageType>,
-          typename BufferContainer = std::vector<BufferType>,
+          MessageContainerType MessageContainer = std::vector<MessageType>,
+          MPIBuffer BufferContainer = std::vector<BufferType>,
           aggregation::Splitter<MessageType, BufferContainer> Splitter = aggregation::NoSplitter,
           aggregation::BufferCleaner<BufferContainer> BufferCleaner = aggregation::NoOpCleaner>
+    requires std::same_as<MessageType, std::ranges::range_value_t<MessageContainer>> &&
+             std::same_as<BufferType, std::ranges::range_value_t<BufferContainer>>
 auto make_buffered_queue(MPI_Comm comm = MPI_COMM_WORLD,
                          Splitter splitter = Splitter{},
                          BufferCleaner cleaner = BufferCleaner{}) {
@@ -338,9 +350,11 @@ auto make_buffered_queue(MPI_Comm comm = MPI_COMM_WORLD,
 
 template <typename MessageType,
           MPIType BufferType = MessageType,
-          typename MessageContainer = std::vector<MessageType>,
-          typename BufferContainer = std::vector<BufferType>,
+          MessageContainerType MessageContainer = std::vector<MessageType>,
+          MPIBuffer BufferContainer = std::vector<BufferType>,
           aggregation::BufferCleaner<BufferContainer> BufferCleaner = aggregation::NoOpCleaner>
+    requires std::same_as<MessageType, std::ranges::range_value_t<MessageContainer>> &&
+             std::same_as<BufferType, std::ranges::range_value_t<BufferContainer>>
 auto make_buffered_queue(MPI_Comm comm = MPI_COMM_WORLD, BufferCleaner cleaner = BufferCleaner{}) {
     return BufferedMessageQueueV2<MessageType, BufferType, MessageContainer, BufferContainer, aggregation::AppendMerger,
                                   aggregation::NoSplitter, BufferCleaner>(
