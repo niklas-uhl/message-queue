@@ -17,10 +17,10 @@ auto main(int argc, char* argv[]) -> int {
     auto printing_cleaner = [](auto& buf, message_queue::PEID receiver) {
         message_queue::atomic_debug(fmt::format("Preparing buffer {} to {}.", buf, receiver));
     };
-    auto queue1 = message_queue::make_buffered_queue_with_cleaner<int>(MPI_COMM_WORLD, printing_cleaner);
+    auto queue1 = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, printing_cleaner);
     MPI_Comm other_comm;
     MPI_Comm_dup(MPI_COMM_WORLD, &other_comm);
-    auto queue2 = message_queue::make_buffered_queue_with_cleaner<int>(other_comm, printing_cleaner);
+    auto queue2 = message_queue::make_buffered_queue<int>(other_comm, printing_cleaner);
     int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);

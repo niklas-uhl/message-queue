@@ -311,17 +311,6 @@ template <typename MessageType,
           MPIType BufferType = MessageType,
           typename MessageContainer = std::vector<MessageType>,
           typename BufferContainer = std::vector<BufferType>,
-          aggregation::BufferCleaner<BufferContainer> Cleaner>
-auto make_buffered_queue_with_cleaner(MPI_Comm comm, Cleaner cleaner) {
-    return BufferedMessageQueueV2<MessageType, BufferType, MessageContainer, BufferContainer, aggregation::AppendMerger,
-                                  aggregation::NoSplitter, Cleaner>(comm, aggregation::AppendMerger{},
-                                                                    aggregation::NoSplitter{}, std::move(cleaner));
-}
-
-template <typename MessageType,
-          MPIType BufferType = MessageType,
-          typename MessageContainer = std::vector<MessageType>,
-          typename BufferContainer = std::vector<BufferType>,
           aggregation::Merger<MessageContainer, BufferContainer> Merger = aggregation::AppendMerger,
           aggregation::Splitter<MessageType, BufferContainer> Splitter = aggregation::NoSplitter,
           aggregation::BufferCleaner<BufferContainer> BufferCleaner = aggregation::NoOpCleaner>
@@ -331,6 +320,31 @@ auto make_buffered_queue(MPI_Comm comm = MPI_COMM_WORLD,
                          BufferCleaner cleaner = BufferCleaner{}) {
     return BufferedMessageQueueV2<MessageType, BufferType, MessageContainer, BufferContainer, Merger, Splitter,
                                   BufferCleaner>(comm, std::move(merger), std::move(splitter), std::move(cleaner));
+}
+
+template <typename MessageType,
+          MPIType BufferType = MessageType,
+          typename MessageContainer = std::vector<MessageType>,
+          typename BufferContainer = std::vector<BufferType>,
+          aggregation::Splitter<MessageType, BufferContainer> Splitter = aggregation::NoSplitter,
+          aggregation::BufferCleaner<BufferContainer> BufferCleaner = aggregation::NoOpCleaner>
+auto make_buffered_queue(MPI_Comm comm = MPI_COMM_WORLD,
+                         Splitter splitter = Splitter{},
+                         BufferCleaner cleaner = BufferCleaner{}) {
+    return BufferedMessageQueueV2<MessageType, BufferType, MessageContainer, BufferContainer, aggregation::AppendMerger,
+                                  Splitter, BufferCleaner>(comm, aggregation::AppendMerger{}, std::move(splitter),
+                                                           std::move(cleaner));
+}
+
+template <typename MessageType,
+          MPIType BufferType = MessageType,
+          typename MessageContainer = std::vector<MessageType>,
+          typename BufferContainer = std::vector<BufferType>,
+          aggregation::BufferCleaner<BufferContainer> BufferCleaner = aggregation::NoOpCleaner>
+auto make_buffered_queue(MPI_Comm comm = MPI_COMM_WORLD, BufferCleaner cleaner = BufferCleaner{}) {
+    return BufferedMessageQueueV2<MessageType, BufferType, MessageContainer, BufferContainer, aggregation::AppendMerger,
+                                  aggregation::NoSplitter, BufferCleaner>(
+        comm, aggregation::AppendMerger{}, aggregation::NoSplitter{}, std::move(cleaner));
 }
 
 }  // namespace message_queue
