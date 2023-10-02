@@ -75,16 +75,16 @@ int main(int argc, char* argv[]) {
             message[2] = i;
             queue.post_message(MessageContainer(message), (rank + rank_dist(eng)) % size);
         }
-        auto on_message = [&](auto msg, message_queue::PEID sender, int tag = 0) {
+        auto on_message = [&](message_queue::Envelope<int> auto envelope) {
             if (bernoulli_dist(eng)) {
-                auto begin = msg.begin();
+                auto begin = envelope.message.begin();
                 std::stringstream ss;
                 ss << "Message " << *(begin + 2) << " from " << *begin << " arrived after " << *(begin + 1) << " hops.";
                 message_queue::atomic_debug(ss.str());
             } else {
-                KASSERT(msg.size() > 1);
-                msg[1]++;
-                queue.post_message(std::move(msg), (rank + rank_dist(eng)) % size);
+                KASSERT(envelope.message.size() > 1);
+                envelope.message[1]++;
+                queue.post_message(std::move(envelope.message), (rank + rank_dist(eng)) % size);
             }
         };
         queue.poll(on_message);

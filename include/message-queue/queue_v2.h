@@ -10,14 +10,12 @@
 #include <ranges>  // IWYU pragma: keep
 #include <utility>
 #include <vector>
-#include "debug_print.h"
 #include "message-queue/datatype.hpp"
 #include "message-queue/debug_print.h"
+#include "message-queue/concepts.hpp"
 
 namespace message_queue {
 
-template <typename Container>
-concept MPIBuffer = std::ranges::sized_range<Container> && std::ranges::contiguous_range<Container>;
 
 namespace internal {
 size_t comm_size(MPI_Comm comm = MPI_COMM_WORLD);
@@ -310,15 +308,8 @@ struct MessageCounter {
 
 }  // namespace internal
 
-template <typename MessageFunc,
-          typename MessageDataType,
-          typename MessageContainerType = std::ranges::empty_view<MessageDataType>>
-concept MessageHandler = MPIType<MessageDataType> && requires(MessageFunc f, MessageContainerType msg, PEID sender, int tag) {
-    f(msg, sender, tag);
-};
 
-template <MPIType T, MPIBuffer MessageContainer = std::vector<T>>
-    requires std::same_as<T, typename MessageContainer::value_type>
+template <MPIType T, MPIBuffer<T> MessageContainer = std::vector<T>>
 class MessageQueueV2 {
     template <class U, class Merger, class Splitter>
     friend class BufferedMessageQueue;
@@ -458,7 +449,7 @@ public:
         for (auto& handle : messages_to_receive) {
             // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
             local_message_count.receive++;
-            on_message(handle.extract_message(), handle.sender(), handle.tag());
+            on_message(FullEnvelope {.message = handle.extract_message(), .sender = handle.sender(), .receiver = rank_, .tag = handle.tag()});
         }
         messages_to_receive.clear();
         return something_happenend;

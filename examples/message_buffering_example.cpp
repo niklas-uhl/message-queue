@@ -40,8 +40,8 @@ auto main(int argc, char* argv[]) -> int {
         int val = dist(gen);
         queue.post_message(val, val);
     }
-    queue.terminate([&](auto msg, auto sender, auto tag) {
-        message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", msg, sender));
+    queue.terminate([&](message_queue::Envelope<int> auto envelope) {
+        message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", envelope.message, envelope.sender));
     });
     MPI_Finalize();
     return 0;

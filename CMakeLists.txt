@@ -12,6 +12,8 @@ set(message_queue_source_files
   src/buffered_queue_v2.cpp
   src/datatype.cpp
   src/debug_print.cpp
+  src/concepts.cpp
+  src/aggregators.cpp
 )
 
 add_library(message-queue ${message_queue_source_files})

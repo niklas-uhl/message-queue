@@ -13,7 +13,6 @@
 #include <string>
 
 namespace message_queue {
-using PEID = int;
 
 #ifndef DEBUG_BARRIER
 #ifndef NDEBUG
@@ -49,7 +48,7 @@ using PEID = int;
 
 struct MPIException : public std::exception {
     MPIException(const std::string& msg) : msg_() {
-        PEID rank;
+        int rank;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         msg_ = "[R" + std::to_string(rank) + "] " + msg;
     }

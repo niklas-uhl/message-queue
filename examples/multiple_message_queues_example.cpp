@@ -32,11 +32,12 @@ auto main(int argc, char* argv[]) -> int {
         queue1.post_message(1, val);
         queue2.post_message(2, val);
     }
-    queue2.terminate([&](auto msg, auto sender, auto tag) {
-        message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", msg, sender));
+    queue2.terminate([&](message_queue::Envelope<int> auto envelope) {
+        message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", envelope.message, envelope.sender));
     });
-    queue1.terminate([&](auto msg, auto sender, auto tag) {
-        message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", msg, sender));
+
+    queue1.terminate([&](message_queue::Envelope<int> auto envelope) {
+        message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", envelope.message, envelope.sender));
     });
     MPI_Finalize();
     return 0;

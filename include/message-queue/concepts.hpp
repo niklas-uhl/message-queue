@@ -1,0 +1,96 @@
+#pragma once
+
+#include <concepts>  // IWYU pragma: keep
+#include <ranges>
+#include <vector>
+#include "message-queue/datatype.hpp"  // IWYU pragma: keep
+
+namespace message_queue {
+
+using PEID = int;
+
+/// @brief a buffer directly sendable by \c std::data() and \c std::size() to an MPI call.
+template <typename Container, typename ValueType = void>
+concept MPIBuffer = std::ranges::sized_range<Container> && std::ranges::contiguous_range<Container> &&
+                    MPIType<std::ranges::range_value_t<Container>> &&
+                    (std::same_as<void, ValueType> || std::same_as<ValueType, std::ranges::range_value_t<Container>>);
+
+/// @brief messages which need not necessarily satisfy \ref MPIType.
+template <typename Range, typename MessageType = void>
+concept MessageRange =
+    std::ranges::input_range<Range> && std::ranges::sized_range<Range> &&
+    (std::same_as<void, MessageType> || std::same_as<MessageType, std::ranges::range_value_t<Range>>);
+
+static_assert(MessageRange<std::vector<int>, int>);
+static_assert(MessageRange<std::ranges::single_view<int>, int>);
+static_assert(MessageRange<std::ranges::empty_view<int>, int>);
+
+enum class EnvelopeType { tag, full };
+
+template <typename E, typename MessageType = void>
+concept Envelope = requires(E envelope) {
+    { envelope.tag } -> std::same_as<int&>;
+    { envelope.message } -> MessageRange<MessageType>;
+    typename E::message_range_type;
+    typename E::message_value_type;
+    requires std::same_as<decltype(E::type), const EnvelopeType>;
+} && MessageRange<typename E::message_range_type, MessageType>;
+
+template <MessageRange MessageRangeType>
+struct FullEnvelope {
+    using message_range_type = MessageRangeType;
+    using message_value_type = std::ranges::range_value_t<message_range_type>;
+    static constexpr EnvelopeType type = EnvelopeType::full;
+    MessageRangeType message;
+    PEID sender;
+    PEID receiver;
+    int tag;
+};
+
+static_assert(Envelope<FullEnvelope<std::vector<int>>, int>);
+static_assert(Envelope<FullEnvelope<std::vector<int>>>);
+
+template <typename MessageFunc,
+          typename MessageDataType,
+          typename MessageContainerType = std::ranges::empty_view<MessageDataType>>
+concept MessageHandler = MessageRange<MessageContainerType, MessageDataType> &&
+                         requires(MessageFunc on_message, FullEnvelope<MessageContainerType> envelope) {
+                             { on_message(std::move(envelope)) };
+                         };
+
+namespace aggregation {
+template <typename MergerType, typename MessageType, typename BufferContainer>
+concept Merger = requires(MergerType merge,
+                          BufferContainer& buffer,
+                          PEID buffer_destination,
+                          PEID my_rank,
+                          FullEnvelope<std::ranges::empty_view<MessageType>> envelope) {
+    merge(buffer, buffer_destination, my_rank, std::move(envelope));
+};
+
+template <typename MergerType, typename MessageType, typename BufferContainer>
+concept EstimatingMerger = Merger<MergerType, MessageType, BufferContainer> &&
+                           requires(MergerType merge,
+                                    BufferContainer const& buffer,
+                                    PEID buffer_destination,
+                                    PEID my_rank,
+                                    FullEnvelope<std::ranges::empty_view<MessageType>> const& envelope) {
+                               {
+                                   merge.estimate_new_buffer_size(buffer, buffer_destination, my_rank, envelope)
+                               } -> std::same_as<size_t>;
+                           };
+
+template <typename Range, typename T>
+concept SplitRange = std::ranges::forward_range<Range> && Envelope<std::ranges::range_value_t<Range>, T>;
+
+template <typename SplitterType, typename MessageType, typename BufferContainer>
+concept Splitter = requires(SplitterType split, PEID buffer_origin, PEID my_rank, BufferContainer const& buffer) {
+    { split(buffer, buffer_origin, my_rank) } -> SplitRange<MessageType>;
+};
+
+template <typename BufferCleanerType, typename BufferContainer>
+concept BufferCleaner = requires(BufferCleanerType pre_send_cleanup, BufferContainer& buffer, PEID receiver) {
+    pre_send_cleanup(buffer, receiver);
+};
+}  // namespace aggregation
+}  // namespace message_queue

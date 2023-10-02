@@ -7,163 +7,21 @@
 #include <unordered_map>
 #include <vector>
 
+#include "message-queue/aggregators.hpp"
+#include "message-queue/concepts.hpp"
 #include "message-queue/queue_v2.h"
 
 namespace message_queue {
-
-template <typename Range>
-concept MessageRange = std::ranges::input_range<Range> && std::ranges::sized_range<Range>;
-
-template <typename Range, typename MessageType>
-concept TypedMessageRange = MessageRange<Range> && std::same_as<MessageType, std::ranges::range_value_t<Range>>;
-
-static_assert(TypedMessageRange<std::vector<int>, int>);
-static_assert(TypedMessageRange<std::ranges::single_view<int>, int>);
-static_assert(TypedMessageRange<std::ranges::empty_view<int>, int>);
-
-template <typename E, typename MessageType>
-concept Envelope = requires(E envelope) {
-    { envelope.tag } -> std::same_as<int&>;
-    { envelope.message } -> TypedMessageRange<MessageType>;
-} && TypedMessageRange<typename E::message_range_type, MessageType>;
-
-enum class EnvelopeType { tag, full };
-
-template <MessageRange MessageRangeType>
-struct TagEnvelope {
-    using message_range_type = MessageRangeType;
-    using message_value_type = std::ranges::range_value_t<message_range_type>;
-    static constexpr EnvelopeType type = EnvelopeType::tag;
-    int tag;
-    MessageRangeType message;
-};
-static_assert(Envelope<TagEnvelope<std::vector<int>>, int>);
-
-template <MessageRange MessageRangeType>
-struct FullEnvelope {
-    using message_range_type = MessageRangeType;
-    using message_value_type = std::ranges::range_value_t<message_range_type>;
-    static constexpr EnvelopeType type = EnvelopeType::full;
-    int tag;
-    PEID sender;
-    PEID receiver;
-    MessageRangeType message;
-};
-static_assert(Envelope<FullEnvelope<std::vector<int>>, int>);
-
-namespace aggregation {
-
-template <typename MergerType, typename MessageType, typename BufferContainer>
-concept TagEnvelopeMerger =
-    requires(MergerType merge, BufferContainer& buffer, TagEnvelope<std::ranges::empty_view<MessageType>> envelope) {
-        merge(buffer, envelope);
-    };
-
-template <typename MergerType, typename MessageType, typename BufferContainer>
-concept FullEnvelopeMerger =
-    requires(MergerType merge, BufferContainer& buffer, FullEnvelope<std::ranges::empty_view<MessageType>> envelope) {
-        merge(buffer, envelope);
-    };
-
-template <typename MergerType, typename MessageType, typename BufferContainer>
-concept Merger = TagEnvelopeMerger<MergerType, MessageType, BufferContainer> ||
-                 FullEnvelopeMerger<MergerType, MessageType, BufferContainer>;
-
-template <typename MergerType, typename MessageType, typename BufferContainer>
-concept EstimatingMerger =
-    Merger<MergerType, MessageType, BufferContainer> && requires(MergerType merge, BufferContainer& buffer, int tag) {
-        { merge.estimate_new_buffer_size(buffer, std::ranges::views::empty<MessageType>, tag) } -> std::same_as<size_t>;
-    };
-
-template <typename Range, typename T>
-concept SplitRange = std::ranges::forward_range<Range> && Envelope<std::ranges::range_value_t<Range>, T>;
-
-template <typename SplitterType, typename MessageType, typename BufferContainer>
-concept Splitter = requires(SplitterType split, BufferContainer const& buffer) {
-    { split(buffer) } -> SplitRange<MessageType>;
-};
-
-template<typename Merger, typename Splitter>
-static constexpr bool merger_and_splitter_use_same_envelope = true;
-
-template <typename BufferCleanerType, typename BufferContainer>
-concept BufferCleaner = requires(BufferCleanerType pre_send_cleanup, BufferContainer& buffer, PEID receiver) {
-    pre_send_cleanup(buffer, receiver);
-};
-
-struct AppendMerger {
-    template <typename MessageContainer, typename BufferContainer>
-    void operator()(BufferContainer& buffer, TagEnvelope<MessageContainer> const& envelope) const {
-        buffer.insert(std::end(buffer), std::begin(envelope.message), std::end(envelope.message));
-    }
-    template <typename MessageContainer, typename BufferContainer>
-    size_t estimate_new_buffer_size(BufferContainer& buffer, MessageContainer const& message, int tag) const {
-        return buffer.size() + message.size();
-    };
-};
-static_assert(EstimatingMerger<AppendMerger, std::vector<int>, std::vector<int>>);
-
-struct NoSplitter {
-    template <typename BufferContainer>
-    auto operator()(BufferContainer const& buffer) const {
-        return std::ranges::single_view(TagEnvelope{0, buffer});
-    }
-};
-static_assert(Splitter<NoSplitter, int, std::vector<int>>);
-
-template <MPIType BufferType>
-struct SentinelMerger {
-    SentinelMerger(BufferType sentinel) : sentinel_(sentinel) {}
-
-    template <typename MessageContainer, typename BufferContainer>
-        requires std::same_as<BufferType, typename BufferContainer::value_type>
-    void operator()(BufferContainer& buffer, TagEnvelope<MessageContainer> const& envelope) const {
-        buffer.insert(std::end(buffer), std::begin(envelope.message), std::end(envelope.message));
-        buffer.push_back(sentinel_);
-    }
-    template <typename MessageContainer, typename BufferContainer>
-        requires std::same_as<BufferType, typename BufferContainer::value_type>
-    size_t estimate_new_buffer_size(BufferContainer& buffer, MessageContainer const& message, int tag) const {
-        return buffer.size() + message.size() + 1;
-    };
-    BufferType sentinel_;
-};
-static_assert(EstimatingMerger<SentinelMerger<int>, std::vector<int>, std::vector<int>>);
-
-template <MPIType BufferType>
-struct SentinelSplitter {
-    SentinelSplitter(BufferType sentinel) : sentinel_(sentinel) {}
-
-    template <typename BufferContainer>
-        requires std::same_as<BufferType, typename BufferContainer::value_type>
-    auto operator()(BufferContainer const& buffer) const {
-        return std::views::split(buffer, sentinel_) | std::views::transform([](auto&& range) {
-                   return TagEnvelope{0, std::move(range)};
-               });
-    }
-    BufferType sentinel_;
-};
-
-static_assert(Splitter<SentinelSplitter<int>, int, std::vector<int>>);
-
-struct NoOpCleaner {
-    template <typename BufferContainer>
-    void operator()(BufferContainer& buffer, PEID) const {}
-};
-static_assert(BufferCleaner<NoOpCleaner, std::vector<int>>);
-
-}  // namespace aggregation
 
 enum class FlushStrategy { local, global, random, largest };
 
 template <typename MessageType,
           MPIType BufferType = MessageType,
           // MessageContainerType MessageContainer = std::vector<MessageType>,
-          MPIBuffer BufferContainer = std::vector<BufferType>,
+          MPIBuffer<BufferType> BufferContainer = std::vector<BufferType>,
           aggregation::Merger<MessageType, BufferContainer> Merger = aggregation::AppendMerger,
           aggregation::Splitter<MessageType, BufferContainer> Splitter = aggregation::NoSplitter,
           aggregation::BufferCleaner<BufferContainer> BufferCleaner = aggregation::NoOpCleaner>
-    requires std::same_as<BufferType, std::ranges::range_value_t<BufferContainer>>
 class BufferedMessageQueueV2 {
 private:
     using BufferMap = std::unordered_map<PEID, BufferContainer>;
@@ -197,10 +55,13 @@ public:
                                  std::move(splitter),
                                  std::move(cleaner)) {}
 
-    bool post_message(TypedMessageRange<MessageType> auto const& message, PEID receiver, int tag = 0) {
+    bool post_message(MessageRange<MessageType> auto const& message, PEID receiver, int tag = 0) {
+        auto envelope =
+            FullEnvelope{.message = std::move(message), .sender = queue_.rank(), .receiver = receiver, .tag = tag};
         size_t estimated_new_buffer_size;
         if constexpr (aggregation::EstimatingMerger<Merger, MessageType, BufferContainer>) {
-            estimated_new_buffer_size = merge.estimate_new_buffer_size(buffers_[receiver], message, tag);
+            estimated_new_buffer_size =
+                merge.estimate_new_buffer_size(buffers_[receiver], receiver, queue_.rank(), envelope);
         } else {
             estimated_new_buffer_size = buffers_[receiver].size() + message.size();
         }
@@ -210,13 +71,8 @@ public:
             flush_buffer(receiver);
             overflow = true;
         }
-        static constexpr EnvelopeType envelope_type = std::ranges::range_value_t<decltype(split(std::declval<BufferContainer>()))>::type;
-        if constexpr (envelope_type == EnvelopeType::tag) {
-            merge(buffers_[receiver], TagEnvelope{tag, std::move(message)});
-        } else if constexpr (envelope_type == EnvelopeType::full) {
-            PEID rank;
-            merge(buffers_[receiver], FullEnvelope{tag, queue_.rank(), receiver, std::move(message)});
-        }
+        PEID rank;
+        merge(buffers_[receiver], receiver, queue_.rank(), std::move(envelope));
         auto new_buffer_size = buffers_[receiver].size();
         global_buffer_size_ += new_buffer_size - old_buffer_size;
         return overflow;
@@ -265,21 +121,20 @@ public:
     }
 
     bool poll(MessageHandler<MessageType> auto&& on_message) {
-        auto split_on_message = [&](auto message, PEID sender, int /*tag*/) {
-            for (auto&& [tag, message] : split(message)) {
-                on_message(std::move(message), sender, tag);
+        auto split_on_message = [&](Envelope<BufferType> auto buffer) {
+            for (Envelope<MessageType> auto env : split(buffer.message, buffer.sender, queue_.rank())) {
+                on_message(std::move(env));
             }
         };
         return queue_.poll(split_on_message);
     }
 
     bool terminate(MessageHandler<MessageType> auto&& on_message) {
-        auto split_on_message = [&](TypedMessageRange<BufferType> auto message, PEID sender, int /*tag*/) {
-            for (auto&& [tag, message] : split(message)) {
-                on_message(std::move(message), sender, tag);
+        auto split_on_message = [&](Envelope<BufferType> auto buffer) {
+            for (Envelope<MessageType> auto env : split(buffer.message, buffer.sender, queue_.rank())) {
+                on_message(std::move(env));
             }
         };
-
         auto before_next_message_counting_round_hook = [&] {
             flush_all_buffers();
         };
