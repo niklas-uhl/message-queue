@@ -37,7 +37,7 @@ concept Envelope = requires(E envelope) {
 } && MessageRange<typename E::message_range_type, MessageType>;
 
 template <MessageRange MessageRangeType>
-struct FullEnvelope {
+struct MessageEnvelope {
     using message_range_type = MessageRangeType;
     using message_value_type = std::ranges::range_value_t<message_range_type>;
     static constexpr EnvelopeType type = EnvelopeType::full;
@@ -47,14 +47,14 @@ struct FullEnvelope {
     int tag;
 };
 
-static_assert(Envelope<FullEnvelope<std::vector<int>>, int>);
-static_assert(Envelope<FullEnvelope<std::vector<int>>>);
+static_assert(Envelope<MessageEnvelope<std::vector<int>>, int>);
+static_assert(Envelope<MessageEnvelope<std::vector<int>>>);
 
 template <typename MessageFunc,
           typename MessageDataType,
           typename MessageContainerType = std::ranges::empty_view<MessageDataType>>
 concept MessageHandler = MessageRange<MessageContainerType, MessageDataType> &&
-                         requires(MessageFunc on_message, FullEnvelope<MessageContainerType> envelope) {
+                         requires(MessageFunc on_message, MessageEnvelope<MessageContainerType> envelope) {
                              { on_message(std::move(envelope)) };
                          };
 
@@ -64,7 +64,7 @@ concept Merger = requires(MergerType merge,
                           BufferContainer& buffer,
                           PEID buffer_destination,
                           PEID my_rank,
-                          FullEnvelope<std::ranges::empty_view<MessageType>> envelope) {
+                          MessageEnvelope<std::ranges::empty_view<MessageType>> envelope) {
     merge(buffer, buffer_destination, my_rank, std::move(envelope));
 };
 
@@ -74,7 +74,7 @@ concept EstimatingMerger = Merger<MergerType, MessageType, BufferContainer> &&
                                     BufferContainer const& buffer,
                                     PEID buffer_destination,
                                     PEID my_rank,
-                                    FullEnvelope<std::ranges::empty_view<MessageType>> const& envelope) {
+                                    MessageEnvelope<std::ranges::empty_view<MessageType>> const& envelope) {
                                {
                                    merge.estimate_new_buffer_size(buffer, buffer_destination, my_rank, envelope)
                                } -> std::same_as<size_t>;

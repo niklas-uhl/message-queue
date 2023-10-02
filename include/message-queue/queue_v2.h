@@ -449,7 +449,7 @@ public:
         for (auto& handle : messages_to_receive) {
             // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
             local_message_count.receive++;
-            on_message(FullEnvelope {.message = handle.extract_message(), .sender = handle.sender(), .receiver = rank_, .tag = handle.tag()});
+            on_message(MessageEnvelope {.message = handle.extract_message(), .sender = handle.sender(), .receiver = rank_, .tag = handle.tag()});
         }
         messages_to_receive.clear();
         return something_happenend;

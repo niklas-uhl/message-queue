@@ -2,7 +2,6 @@
 
 #include <mpi.h>
 #include <algorithm>
-#include <iterator>
 #include <ranges>
 #include <unordered_map>
 #include <vector>
@@ -17,7 +16,6 @@ enum class FlushStrategy { local, global, random, largest };
 
 template <typename MessageType,
           MPIType BufferType = MessageType,
-          // MessageContainerType MessageContainer = std::vector<MessageType>,
           MPIBuffer<BufferType> BufferContainer = std::vector<BufferType>,
           aggregation::Merger<MessageType, BufferContainer> Merger = aggregation::AppendMerger,
           aggregation::Splitter<MessageType, BufferContainer> Splitter = aggregation::NoSplitter,
@@ -29,7 +27,6 @@ private:
 public:
     using message_type = MessageType;
     using buffer_type = BufferType;
-    // using message_container_type = MessageContainer;
     using buffer_container_type = BufferContainer;
     using merger_type = Merger;
     using splitter_type = Splitter;
@@ -57,7 +54,7 @@ public:
 
     bool post_message(MessageRange<MessageType> auto const& message, PEID receiver, int tag = 0) {
         auto envelope =
-            FullEnvelope{.message = std::move(message), .sender = queue_.rank(), .receiver = receiver, .tag = tag};
+            MessageEnvelope{.message = std::move(message), .sender = queue_.rank(), .receiver = receiver, .tag = tag};
         size_t estimated_new_buffer_size;
         if constexpr (aggregation::EstimatingMerger<Merger, MessageType, BufferContainer>) {
             estimated_new_buffer_size =

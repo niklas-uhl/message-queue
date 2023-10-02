@@ -40,7 +40,7 @@ auto main(int argc, char* argv[]) -> int {
                    auto message = chunk | ranges::views::drop(1) | ranges::views::chunk(2) |
                                   std::ranges::views::transform(
                                       [&](auto const& chunk) { return std::make_pair(chunk[0], chunk[1]); });
-                   return message_queue::FullEnvelope{
+                   return message_queue::MessageEnvelope{
                        .message = std::move(message), .sender = buffer_origin, .receiver = my_rank, .tag = tag};
                });
     };

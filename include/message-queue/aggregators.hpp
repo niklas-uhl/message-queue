@@ -17,7 +17,7 @@ struct AppendMerger {
     size_t estimate_new_buffer_size(BufferContainer const& buffer,
                                     PEID buffer_destination,
                                     PEID my_rank,
-                                    FullEnvelope<MessageContainer> const& envelope) const {
+                                    MessageEnvelope<MessageContainer> const& envelope) const {
         return buffer.size() + envelope.message.size();
     };
 };
@@ -27,7 +27,7 @@ static_assert(EstimatingMerger<AppendMerger, int, std::vector<int>>);
 struct NoSplitter {
     auto operator()(MPIBuffer auto const& buffer, PEID buffer_origin, PEID my_rank) const {
         return std::ranges::single_view(
-            FullEnvelope{.message = buffer, .sender = buffer_origin, .receiver = my_rank, .tag = 0});
+            MessageEnvelope{.message = buffer, .sender = buffer_origin, .receiver = my_rank, .tag = 0});
     }
 };
 static_assert(Splitter<NoSplitter, int, std::vector<int>>);
@@ -61,7 +61,7 @@ struct SentinelSplitter {
     auto operator()(MPIBuffer<BufferType> auto const& buffer, PEID buffer_origin, PEID my_rank) const {
         return std::views::split(buffer, sentinel_) |
                std::views::transform([&, buffer_origin = buffer_origin, my_rank = my_rank](auto&& range) {
-                   return FullEnvelope{
+                   return MessageEnvelope{
                        .message = std::move(range), .sender = buffer_origin, .receiver = my_rank, .tag = 0};
                });
     }
