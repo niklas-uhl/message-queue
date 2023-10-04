@@ -450,6 +450,24 @@ public:
         return something_happenend;
     }
 
+    bool probe_for_one_message(MessageHandler<T, MessageContainer> auto&& on_message,
+                               PEID source = MPI_ANY_SOURCE,
+                               int tag = MPI_ANY_TAG) {
+        if (auto probe_result = internal::handles::probe(comm_, source, tag)) {
+            auto recv_handle = probe_result->template handle<T, MessageContainer>();
+            MPI_Request recv_req;
+            recv_handle.set_request(&recv_req);
+            recv_handle.receive();
+            local_message_count.receive++;
+            on_message(MessageEnvelope{.message = recv_handle.extract_message(),
+                                       .sender = recv_handle.sender(),
+                                       .receiver = rank_,
+                                       .tag = recv_handle.tag()});
+            return true;
+        }
+        return false;
+    }
+
     bool poll(MessageHandler<T, MessageContainer> auto&& on_message) {
         bool something_happenend = false;
         something_happenend |= progress_sending();

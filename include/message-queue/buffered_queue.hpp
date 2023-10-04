@@ -93,23 +93,6 @@ public:
         flush_buffer_impl(it);
     }
 
-    auto flush_buffer_impl(BufferMap::iterator buffer_it) {
-        KASSERT(buffer_it != buffers_.end(), "Trying to flush non-existing buffer.");
-        auto& [receiver, buffer] = *buffer_it;
-        if (buffer.empty()) {
-            return ++buffer_it;
-        }
-        auto pre_cleanup_buffer_size = buffer.size();
-        pre_send_cleanup(buffer, receiver);
-        // we don't send if the cleanup has emptied the buffer
-        if (buffer.empty()) {
-            return ++buffer_it;
-        }
-        queue_.post_message(std::move(buffer), receiver);
-        global_buffer_size_ -= pre_cleanup_buffer_size;
-        return buffers_.erase(buffer_it);
-    }
-
     void flush_largest_buffer() {
         auto largest_buffer = std::max_element(buffers_.begin(), buffers_.end(),
                                                [](auto& a, auto& b) { return a.second.size() < b.second.size(); });
@@ -138,6 +121,21 @@ public:
 
     void reactivate() {
         queue_.reactivate();
+    }
+
+    bool progress_sending() {
+        return queue_.progress_sending();
+    }
+
+    bool probe_for_messages(MessageHandler<MessageType> auto&& on_message) {
+        return queue_.probe_for_messages(split_handler(on_message));
+    }
+
+    /// on_message may be called multiple times, because this receives a whole buffer and applies the splitter to it
+    bool probe_for_one_message(MessageHandler<MessageType> auto&& on_message,
+                               PEID source = MPI_ANY_SOURCE,
+                               int tag = MPI_ANY_TAG) {
+        return queue_.probe_for_messages(split_handler(on_message));
     }
 
     void global_threshold(size_t threshold) {
@@ -181,6 +179,23 @@ public:
     }
 
 private:
+    auto flush_buffer_impl(BufferMap::iterator buffer_it) {
+        KASSERT(buffer_it != buffers_.end(), "Trying to flush non-existing buffer.");
+        auto& [receiver, buffer] = *buffer_it;
+        if (buffer.empty()) {
+            return ++buffer_it;
+        }
+        auto pre_cleanup_buffer_size = buffer.size();
+        pre_send_cleanup(buffer, receiver);
+        // we don't send if the cleanup has emptied the buffer
+        if (buffer.empty()) {
+            return ++buffer_it;
+        }
+        queue_.post_message(std::move(buffer), receiver);
+        global_buffer_size_ -= pre_cleanup_buffer_size;
+        return buffers_.erase(buffer_it);
+    }
+
     auto split_handler(MessageHandler<MessageType> auto&& on_message) {
         return [&](Envelope<BufferType> auto buffer) {
             for (Envelope<MessageType> auto env : split(buffer.message, buffer.sender, queue_.rank())) {
