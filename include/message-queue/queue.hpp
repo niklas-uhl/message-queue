@@ -10,12 +10,11 @@
 #include <ranges>  // IWYU pragma: keep
 #include <utility>
 #include <vector>
+#include "message-queue/concepts.hpp"
 #include "message-queue/datatype.hpp"
 #include "message-queue/debug_print.hpp"
-#include "message-queue/concepts.hpp"
 
 namespace message_queue {
-
 
 namespace internal {
 size_t comm_size(MPI_Comm comm = MPI_COMM_WORLD);
@@ -308,10 +307,8 @@ struct MessageCounter {
 
 }  // namespace internal
 
-
 template <MPIType T, MPIBuffer<T> MessageContainer = std::vector<T>>
 class MessageQueue {
-
     enum class State { posted, initiated, completed };
 
     bool try_send_something(int hint = -1) {
@@ -444,7 +441,10 @@ public:
         for (auto& handle : messages_to_receive) {
             // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
             local_message_count.receive++;
-            on_message(MessageEnvelope {.message = handle.extract_message(), .sender = handle.sender(), .receiver = rank_, .tag = handle.tag()});
+            on_message(MessageEnvelope{.message = handle.extract_message(),
+                                       .sender = handle.sender(),
+                                       .receiver = rank_,
+                                       .tag = handle.tag()});
         }
         messages_to_receive.clear();
         return something_happenend;

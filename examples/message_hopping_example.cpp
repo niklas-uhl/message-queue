@@ -1,12 +1,12 @@
+#include <fmt/format.h>
 #include <mpi.h>
 #include <CLI/CLI.hpp>
 #include <iostream>
 #include <random>
 #include <string>
-#include <fmt/format.h>
+#include "../tests/testing_helpers.hpp"
 #include "message-queue/debug_print.hpp"
 #include "message-queue/queue.hpp"
-#include "../tests/testing_helpers.hpp"
 
 int main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);

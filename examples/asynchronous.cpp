@@ -37,7 +37,8 @@ int main(int argc, char* argv[]) {
             end = MPI_Wtime();
             std::cout << i << "\t" << end - start << "\n";
         } else if (rank == 1) {
-            MPI_Recv(message.data(), message.size() / 100'000, bigtype, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            MPI_Recv(message.data(), message.size() / 100'000, bigtype, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD,
+                     MPI_STATUS_IGNORE);
         }
         MPI_Barrier(MPI_COMM_WORLD);
     }

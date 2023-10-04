@@ -1,7 +1,7 @@
 #pragma once
 
-#include "message-queue/concepts.hpp"
 #include <iterator>
+#include "message-queue/concepts.hpp"
 
 namespace message_queue::aggregation {
 
