@@ -483,6 +483,10 @@ public:
         return size_;
     }
 
+    MPI_Comm communicator() const {
+        return comm_;
+    }
+
     bool check_termination_condition() {
         bool terminated = message_count_reduce_buffer == global_message_count &&
                           global_message_count.send == global_message_count.receive;

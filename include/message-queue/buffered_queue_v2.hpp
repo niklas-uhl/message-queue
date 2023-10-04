@@ -52,9 +52,9 @@ public:
                                  std::move(splitter),
                                  std::move(cleaner)) {}
 
-    bool post_message(MessageRange<MessageType> auto const& message, PEID receiver, int tag = 0) {
+    bool post_message(MessageRange<MessageType> auto const& message, PEID receiver, PEID envelope_sender, PEID envelope_receiver, int tag) {
         auto envelope =
-            MessageEnvelope{.message = std::move(message), .sender = queue_.rank(), .receiver = receiver, .tag = tag};
+            MessageEnvelope{.message = std::move(message), .sender = envelope_sender, .receiver = envelope_receiver, .tag = tag};
         size_t estimated_new_buffer_size;
         if constexpr (aggregation::EstimatingMerger<Merger, MessageType, BufferContainer>) {
             estimated_new_buffer_size =
@@ -73,6 +73,10 @@ public:
         auto new_buffer_size = buffers_[receiver].size();
         global_buffer_size_ += new_buffer_size - old_buffer_size;
         return overflow;
+    }
+
+    bool post_message(MessageRange<MessageType> auto const& message, PEID receiver, int tag = 0) {
+        return post_message(message, receiver, rank(), receiver, tag);
     }
 
     bool post_message(MessageType message, PEID receiver, int tag = 0) {
@@ -170,6 +174,18 @@ public:
         flush_strategy_ = strategy;
     }
 
+    PEID rank() const {
+        return queue_.rank();
+    }
+
+    PEID size() const {
+        return queue_.size();
+    }
+
+    MPI_Comm communicator() const {
+        return queue_.communicator();
+    }
+
 private:
     void resolve_overflow(PEID receiver) {
         switch (flush_strategy_) {
@@ -217,7 +233,7 @@ template <typename MessageType,
           aggregation::Splitter<MessageType, BufferContainer> Splitter = aggregation::NoSplitter,
           aggregation::BufferCleaner<BufferContainer> BufferCleaner = aggregation::NoOpCleaner>
     requires std::same_as<BufferType, std::ranges::range_value_t<BufferContainer>>
-auto make_buffered_queue(MPI_Comm comm = MPI_COMM_WORLD,
+auto make_buffered_queue(MPI_Comm comm,
                          Merger merger = Merger{},
                          Splitter splitter = Splitter{},
                          BufferCleaner cleaner = BufferCleaner{}) {
@@ -231,9 +247,7 @@ template <typename MessageType,
           aggregation::Splitter<MessageType, BufferContainer> Splitter = aggregation::NoSplitter,
           aggregation::BufferCleaner<BufferContainer> BufferCleaner = aggregation::NoOpCleaner>
     requires std::same_as<BufferType, std::ranges::range_value_t<BufferContainer>>
-auto make_buffered_queue(MPI_Comm comm = MPI_COMM_WORLD,
-                         Splitter splitter = Splitter{},
-                         BufferCleaner cleaner = BufferCleaner{}) {
+auto make_buffered_queue(MPI_Comm comm, Splitter splitter = Splitter{}, BufferCleaner cleaner = BufferCleaner{}) {
     return BufferedMessageQueueV2<MessageType, BufferType, BufferContainer, aggregation::AppendMerger, Splitter,
                                   BufferCleaner>(comm, aggregation::AppendMerger{}, std::move(splitter),
                                                  std::move(cleaner));
