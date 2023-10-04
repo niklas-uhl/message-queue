@@ -310,12 +310,7 @@ struct MessageCounter {
 
 
 template <MPIType T, MPIBuffer<T> MessageContainer = std::vector<T>>
-class MessageQueueV2 {
-    template <class U, class Merger, class Splitter>
-    friend class BufferedMessageQueue;
-    template <class U, class Merger, class Splitter>
-    friend class ConcurrentBufferedMessageQueue;
-    // static_assert(boost::mpi::is_mpi_builtin_datatype<T>::value, "Only builtin MPI types are supported");
+class MessageQueue {
 
     enum class State { posted, initiated, completed };
 
@@ -340,7 +335,7 @@ class MessageQueueV2 {
     }
 
 public:
-    MessageQueueV2(MPI_Comm comm, size_t num_request_slots)
+    MessageQueue(MPI_Comm comm, size_t num_request_slots)
         : outgoing_message_box(),
           request_pool(num_request_slots),
           in_transit_messages(num_request_slots),
@@ -354,7 +349,7 @@ public:
         MPI_Comm_size(comm_, &size_);
     }
 
-    MessageQueueV2(MPI_Comm comm = MPI_COMM_WORLD) : MessageQueueV2(comm, internal::comm_size(comm)) {}
+    MessageQueue(MPI_Comm comm = MPI_COMM_WORLD) : MessageQueue(comm, internal::comm_size(comm)) {}
 
     void post_message(MessageContainer&& message, PEID receiver, int tag = 0) {
         // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));

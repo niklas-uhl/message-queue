@@ -57,7 +57,7 @@ int main(int argc, char* argv[]) {
         // using MessageContainer = message_queue::testing::OwnContainer<int>;
         // using MessageContainer = std::vector<int, message_queue::testing::CustomAllocator<int>>;
 
-        auto queue = message_queue::MessageQueueV2<int, MessageContainer>{};
+        auto queue = message_queue::MessageQueue<int, MessageContainer>{};
         if (use_test_any) {
             queue.use_test_any();
         }
