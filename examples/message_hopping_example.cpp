@@ -5,7 +5,7 @@
 #include <string>
 #include <fmt/format.h>
 #include "message-queue/debug_print.hpp"
-#include "message-queue/queue_v2.hpp"
+#include "message-queue/queue.hpp"
 #include "../tests/testing_helpers.hpp"
 
 int main(int argc, char* argv[]) {

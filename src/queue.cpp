@@ -1,4 +1,4 @@
-#include "message-queue/queue_v2.hpp"
+#include "message-queue/queue.hpp"
 
 namespace message_queue {
 size_t internal::comm_size(MPI_Comm comm) {

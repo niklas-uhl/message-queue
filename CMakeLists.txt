@@ -8,8 +8,8 @@ option(MESSAGE_QUEUE_USE_MY_TEST_FUNCTIONS
 include(cmake/dependencies.cmake)
 
 set(message_queue_source_files
-  src/queue_v2.cpp
-  src/buffered_queue_v2.cpp
+  src/queue.cpp
+  src/buffered_queue.cpp
   src/datatype.cpp
   src/debug_print.cpp
   src/concepts.cpp
