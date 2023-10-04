@@ -3,14 +3,24 @@
 #include <mpi.h>
 #include <cmath>
 #include <kassert/kassert.hpp>
-#include "definitions.h"
+#include "message-queue/concepts.hpp"  // IWYU pragma: keep
+#include "message-queue/definitions.hpp"
 
 namespace message_queue {
+template <typename T>
+concept IndirectionScheme = requires(T scheme, MPI_Comm comm, PEID sender, PEID receiver) {
+    { T{comm} };
+    { scheme.next_hop(sender, receiver) } -> std::same_as<PEID>;
+    { scheme.should_redirect(sender, receiver) } -> std::same_as<bool>;
+};
+
 class GridIndirectionScheme {
 public:
     GridIndirectionScheme(MPI_Comm comm) : comm_(comm), grid_size_(std::round(std::sqrt(size()))) {}
+
     PEID next_hop(PEID sender, PEID receiver) const {
-        return get_proxy(rank(), receiver);
+        auto proxy = get_proxy(rank(), receiver);
+        return proxy;
     }
     bool should_redirect(PEID sender, PEID receiver) const {
         return receiver != rank();
@@ -24,19 +34,19 @@ private:
     }
     int size() const {
         int my_size;
-        MPI_Comm_rank(comm_, &my_size);
+        MPI_Comm_size(comm_, &my_size);
         return my_size;
     }
     struct GridPosition {
         int row;
         int column;
-        bool operator==(const GridPosition& rhs) {
+        bool operator==(const GridPosition& rhs) const {
             return row == rhs.row && column == rhs.column;
         }
     };
 
     GridPosition rank_to_grid_position(PEID mpi_rank) const {
-        return GridPosition{rank() / grid_size_, rank() % grid_size_};
+        return GridPosition{mpi_rank / grid_size_, mpi_rank % grid_size_};
     }
 
     PEID grid_position_to_rank(GridPosition grid_position) const {
@@ -57,6 +67,64 @@ private:
     }
     MPI_Comm comm_;
     PEID grid_size_;
-}
+};
+
+static_assert(IndirectionScheme<GridIndirectionScheme>);
+
+template <IndirectionScheme Indirector, typename BufferedQueueType>
+class IndirectionAdapter : public BufferedQueueType {
+public:
+    using queue_type = BufferedQueueType;
+    IndirectionAdapter(BufferedQueueType queue)
+        : BufferedQueueType(std::move(queue)), indirection_(this->communicator()) {}
+
+    bool post_message(MessageRange<typename queue_type::message_type> auto const& message,
+                      PEID receiver,
+                      PEID envelope_sender,
+                      PEID envelope_receiver,
+                      int tag,
+                      bool direct_send = false) {
+        PEID next_hop;
+        if (direct_send) {
+            next_hop = receiver;
+        } else {
+            next_hop = indirection_.next_hop(envelope_sender, envelope_receiver);
+        }
+        return queue_type::post_message(message, next_hop, envelope_sender, envelope_receiver, tag);
+    }
+
+    bool post_message(MessageRange<typename queue_type::message_type> auto const& message,
+                      PEID receiver,
+                      int tag = 0,
+                      bool direct_send = false) {
+        return post_message(message, receiver, this->rank(), receiver, tag, direct_send);
+    }
+
+    bool post_message(typename queue_type::message_type message, PEID receiver, int tag = 0, bool direct_send = false) {
+        return post_message(std::ranges::views::single(message), receiver, tag, direct_send);
+    }
+
+    bool poll(MessageHandler<typename queue_type::message_type> auto&& on_message) {
+        return queue_type::poll(redirection_handler(on_message));
+    }
+
+    bool terminate(MessageHandler<typename queue_type::message_type> auto&& on_message) {
+        return queue_type::terminate(redirection_handler(on_message));
+    }
+
+private:
+    auto redirection_handler(MessageHandler<typename queue_type::message_type> auto&& on_message) {
+        return [&](Envelope<typename queue_type::message_type> auto envelope) {
+            if (indirection_.should_redirect(envelope.sender, envelope.receiver)) {
+                post_message(std::move(envelope.message), envelope.receiver, envelope.sender, envelope.receiver,
+                             envelope.tag);
+            } else {
+                KASSERT(envelope.receiver == this->rank());
+                on_message(std::move(envelope));
+            }
+        };
+    }
+    Indirector indirection_;
+};
 
 }  // namespace message_queue
