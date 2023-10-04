@@ -52,9 +52,13 @@ public:
                                  std::move(splitter),
                                  std::move(cleaner)) {}
 
-    bool post_message(MessageRange<MessageType> auto const& message, PEID receiver, PEID envelope_sender, PEID envelope_receiver, int tag) {
-        auto envelope =
-            MessageEnvelope{.message = std::move(message), .sender = envelope_sender, .receiver = envelope_receiver, .tag = tag};
+    bool post_message(MessageRange<MessageType> auto const& message,
+                      PEID receiver,
+                      PEID envelope_sender,
+                      PEID envelope_receiver,
+                      int tag) {
+        auto envelope = MessageEnvelope{
+            .message = std::move(message), .sender = envelope_sender, .receiver = envelope_receiver, .tag = tag};
         size_t estimated_new_buffer_size;
         if constexpr (aggregation::EstimatingMerger<Merger, MessageType, BufferContainer>) {
             estimated_new_buffer_size =
@@ -122,24 +126,14 @@ public:
     }
 
     bool poll(MessageHandler<MessageType> auto&& on_message) {
-        auto split_on_message = [&](Envelope<BufferType> auto buffer) {
-            for (Envelope<MessageType> auto env : split(buffer.message, buffer.sender, queue_.rank())) {
-                on_message(std::move(env));
-            }
-        };
-        return queue_.poll(split_on_message);
+        return queue_.poll(split_handler(on_message));
     }
 
     bool terminate(MessageHandler<MessageType> auto&& on_message) {
-        auto split_on_message = [&](Envelope<BufferType> auto buffer) {
-            for (Envelope<MessageType> auto env : split(buffer.message, buffer.sender, queue_.rank())) {
-                on_message(std::move(env));
-            }
-        };
         auto before_next_message_counting_round_hook = [&] {
             flush_all_buffers();
         };
-        return queue_.terminate(split_on_message, before_next_message_counting_round_hook);
+        return queue_.terminate(split_handler(on_message), before_next_message_counting_round_hook);
     }
 
     void reactivate() {
@@ -187,6 +181,14 @@ public:
     }
 
 private:
+    auto split_handler(MessageHandler<MessageType> auto&& on_message) {
+        return [&](Envelope<BufferType> auto buffer) {
+            for (Envelope<MessageType> auto env : split(buffer.message, buffer.sender, queue_.rank())) {
+                on_message(std::move(env));
+            }
+        };
+    }
+
     void resolve_overflow(PEID receiver) {
         switch (flush_strategy_) {
             case FlushStrategy::local:
