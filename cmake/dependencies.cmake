@@ -58,6 +58,8 @@ else()
   target_link_libraries(message_queue_boost_dependencies
                         INTERFACE Boost::mpi Boost::circular_buffer)
 endif()
+
+if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME OR MESSAGE_QUEUE_BUILD_EXAMPLES)
 cpmaddpackage(
   NAME range-v3
   URL https://github.com/ericniebler/range-v3/archive/0.12.0.zip
@@ -68,8 +70,6 @@ if (range-v3_ADDED)
   target_include_directories(range-v3 INTERFACE ${range-v3_SOURCE_DIR}/include)
   add_library(range-v3::range-v3 ALIAS range-v3)
 endif()
-
-if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME OR MESSAGE_QUEUE_BUILD_EXAMPLES)
   cpmaddpackage("gh:CLIUtils/CLI11@2.3.2")
   cpmaddpackage("gh:fmtlib/fmt#10.0.0")
   cpmaddpackage(
