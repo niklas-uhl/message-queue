@@ -19,24 +19,38 @@
 
 #pragma once
 
+#ifdef MESSAGE_QUEUE_USE_BOOST
 #include <boost/mpi/datatype.hpp>
+#else
+#include <kamping/mpi_datatype.hpp>
+#endif
 #include <utility>
 
 namespace message_queue {
+#ifdef MESSAGE_QUEUE_USE_BOOST
+template <typename T>
+constexpr bool is_builtin_mpi_type = boost::mpi::is_mpi_builtin_datatype<T>::value;
+#else
+template <typename T>
+constexpr bool is_builtin_mpi_type = kamping::mpi_type_traits<T>::is_builtin;
+#endif
 template <typename T, typename Enable = void>
 struct mpi_type_traits {};
 
 template <typename T>
-struct mpi_type_traits<T, std::enable_if_t<boost::mpi::is_mpi_builtin_datatype<T>::value>> {
+struct mpi_type_traits<T, std::enable_if_t<is_builtin_mpi_type<T>>> {
     static MPI_Datatype get_type() {
+#ifdef MESSAGE_QUEUE_USE_BOOST
         return boost::mpi::get_mpi_datatype<T>();
+#else
+        return kamping::mpi_type_traits<T>::data_type();
+#endif
     }
 };
 template <typename T1, typename T2>
-struct mpi_type_traits<std::pair<T1, T2>,
-                       std::enable_if_t<!boost::mpi::is_mpi_builtin_datatype<std::pair<T1, T2>>::value &&
-                                        boost::mpi::is_mpi_builtin_datatype<T1>::value &&
-                                        boost::mpi::is_mpi_builtin_datatype<T2>::value>> {
+struct mpi_type_traits<
+    std::pair<T1, T2>,
+    std::enable_if_t<!is_builtin_mpi_type<std::pair<T1, T2>> && is_builtin_mpi_type<T1> && is_builtin_mpi_type<T2>>> {
     static MPI_Datatype get_type() {
         static MPI_Datatype type = construct();
         return type;
@@ -44,7 +58,7 @@ struct mpi_type_traits<std::pair<T1, T2>,
 
     static MPI_Datatype construct() {
         std::pair<T1, T2> t;
-        MPI_Datatype types[2] = {boost::mpi::get_mpi_datatype<T1>(), boost::mpi::get_mpi_datatype<T2>()};
+        MPI_Datatype types[2] = {mpi_type_traits<T1>::get_type(), mpi_type_traits<T2>::get_type()};
         int blocklens[2] = {1, 1};
         MPI_Aint disp[2];
         MPI_Get_address(&t.first, &disp[0]);

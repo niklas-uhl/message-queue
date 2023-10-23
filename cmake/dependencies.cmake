@@ -24,52 +24,50 @@ if(NOT TARGET kassert)
   cpmaddpackage("gh:kamping-site/kassert#e683aef")
 endif()
 
-option(MESSAGE_QUEUE_BUILD_BOOST
-       "Build Boost from source, instead of using find_package" OFF)
+option(
+  MESSAGE_QUEUE_USE_BOOST
+  "Use boost.mpi for automatic mpi type deduction instead LGPL licensed parts of KaMPIng."
+  OFF)
 
-if(NOT MESSAGE_QUEUE_BUILD_BOOST)
-  find_package(Boost COMPONENTS mpi headers)
+add_library(message_queue_dependencies INTERFACE)
+if(MESSAGE_QUEUE_USE_BOOST)
+  find_package(Boost COMPONENTS mpi)
   if(Boost_FOUND)
-    add_library(message_queue_boost_dependencies INTERFACE)
-    target_link_libraries(message_queue_boost_dependencies
-                          INTERFACE Boost::mpi Boost::headers)
+    target_link_libraries(message_queue_dependencies INTERFACE Boost::mpi)
+    target_compile_definitions(message_queue_dependencies INTERFACE
+                               MESSAGE_QUEUE_USE_BOOST)
   else()
     message(
       FATAL_ERROR
-        "Boost not on your system. Please set MESSAGE_QUEUE_BUILD_BOOST to ON to build it from source."
-    )
+      "Boost not on your system. Please set MESSAGE_QUEUE_USE_BOOST to OFF or install Boost.")
   endif()
 else()
-  message(
-    STATUS
-      "Boost not found locally, downloading it and building from source. This may take several minutes."
+  FetchContent_Declare(
+    kamping_datatype
+    URL ${CMAKE_CURRENT_LIST_DIR}/../external/kamping/
+    OVERRIDE_FIND_PACKAGE
+    SYSTEM
   )
-  set(BOOST_ENABLE_MPI ON)
-  set(BOOST_INCLUDE_LIBRARIES mpi circular_buffer)
-  cpmaddpackage(
-    NAME
-    boost
-    VERSION
-    1.82.0
-    URL
-    "https://github.com/boostorg/boost/releases/download/boost-1.82.0/boost-1.82.0.tar.xz"
-  )
-  add_library(message_queue_boost_dependencies INTERFACE)
-  target_link_libraries(message_queue_boost_dependencies
-                        INTERFACE Boost::mpi Boost::circular_buffer)
+  find_package(kamping_datatype REQUIRED)
+  target_link_libraries(message_queue_dependencies INTERFACE kamping::datatype)
 endif()
 
 if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME OR MESSAGE_QUEUE_BUILD_EXAMPLES)
-cpmaddpackage(
-  NAME range-v3
-  URL https://github.com/ericniebler/range-v3/archive/0.12.0.zip
-  VERSION 0.12.0
-  DOWNLOAD_ONLY TRUE)
-if (range-v3_ADDED)
-  add_library(range-v3 INTERFACE IMPORTED)
-  target_include_directories(range-v3 INTERFACE ${range-v3_SOURCE_DIR}/include)
-  add_library(range-v3::range-v3 ALIAS range-v3)
-endif()
+  cpmaddpackage(
+    NAME
+    range-v3
+    URL
+    https://github.com/ericniebler/range-v3/archive/0.12.0.zip
+    VERSION
+    0.12.0
+    DOWNLOAD_ONLY
+    TRUE)
+  if(range-v3_ADDED)
+    add_library(range-v3 INTERFACE IMPORTED)
+    target_include_directories(range-v3
+                               INTERFACE ${range-v3_SOURCE_DIR}/include)
+    add_library(range-v3::range-v3 ALIAS range-v3)
+  endif()
   cpmaddpackage("gh:CLIUtils/CLI11@2.3.2")
   cpmaddpackage("gh:fmtlib/fmt#10.0.0")
   cpmaddpackage(
