@@ -9,7 +9,7 @@ FetchContent_Declare(
 )
 
 FetchContent_Declare(
-  kamping_datatype
+  kamping
   URL ${CMAKE_CURRENT_LIST_DIR}/../external/kamping/
   OVERRIDE_FIND_PACKAGE
   SYSTEM
