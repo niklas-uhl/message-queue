@@ -4,4 +4,4 @@ target_include_directories(kamping_datatype INTERFACE ${CMAKE_CURRENT_LIST_DIR}/
 target_link_libraries(kamping_datatype INTERFACE MPI::MPI_CXX)
 target_compile_features(kamping_datatype INTERFACE cxx_std_17)
 
-add_library(kamping::datatype ALIAS kamping_datatype)
+add_library(kamping::kamping ALIAS kamping_datatype)

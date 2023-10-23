@@ -43,13 +43,13 @@ if(MESSAGE_QUEUE_USE_BOOST)
   endif()
 else()
   FetchContent_Declare(
-    kamping_datatype
+    kamping
     URL ${CMAKE_CURRENT_LIST_DIR}/../external/kamping/
     OVERRIDE_FIND_PACKAGE
     SYSTEM
   )
-  find_package(kamping_datatype REQUIRED)
-  target_link_libraries(message_queue_dependencies INTERFACE kamping::datatype)
+  find_package(kamping REQUIRED)
+  target_link_libraries(message_queue_dependencies INTERFACE kamping::kamping)
 endif()
 
 if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME OR MESSAGE_QUEUE_BUILD_EXAMPLES)
