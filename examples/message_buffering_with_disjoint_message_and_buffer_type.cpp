@@ -54,7 +54,7 @@ auto main(int argc, char* argv[]) -> int {
     auto split = [](message_queue::MPIBuffer<int> auto const& buf, message_queue::PEID buffer_origin,
                     message_queue::PEID my_rank) {
         return buf | std::ranges::views::split(-1) |
-               std::ranges::views::transform([&, buffer_origin = buffer_origin, my_rank = my_rank](auto const& chunk) {
+               std::ranges::views::transform([&, buffer_origin = buffer_origin, my_rank = my_rank](auto&& chunk) {
                    int tag = chunk[0];
                    auto message = chunk | ranges::views::drop(1) | ranges::views::chunk(2) |
                                   std::ranges::views::transform(
@@ -90,7 +90,7 @@ auto main(int argc, char* argv[]) -> int {
     queue.post_message(std::pair{0, 0}, 0);
 
     size_t zero_message_counter = 0;
-    auto handler = [&](message_queue::Envelope<std::pair<int, int>> auto const& envelope) {
+    auto handler = [&](message_queue::Envelope<std::pair<int, int>> auto envelope) {
         message_queue::atomic_debug(
             fmt::format("Message {} (tag={}) from {} arrived.", envelope.message, envelope.tag, envelope.sender));
 

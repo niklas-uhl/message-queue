@@ -21,6 +21,7 @@
 
 #include <mpi.h>
 #include <algorithm>
+#include <cstdint>
 #include <ranges>
 #include <unordered_map>
 #include <vector>
@@ -71,34 +72,35 @@ public:
                                std::move(splitter),
                                std::move(cleaner)) {}
 
-    bool post_message(MessageRange<MessageType> auto const& message,
+    bool post_message(MessageRange<MessageType> auto message,
                       PEID receiver,
                       PEID envelope_sender,
                       PEID envelope_receiver,
                       int tag) {
+        auto& buffer = buffers_[receiver];
         auto envelope = MessageEnvelope{
             .message = std::move(message), .sender = envelope_sender, .receiver = envelope_receiver, .tag = tag};
         size_t estimated_new_buffer_size;
         if constexpr (aggregation::EstimatingMerger<Merger, MessageType, BufferContainer>) {
-            estimated_new_buffer_size =
-                merge.estimate_new_buffer_size(buffers_[receiver], receiver, queue_.rank(), envelope);
+            estimated_new_buffer_size = merge.estimate_new_buffer_size(buffer, receiver, queue_.rank(), envelope);
         } else {
-            estimated_new_buffer_size = buffers_[receiver].size() + message.size();
+            estimated_new_buffer_size = buffer.size() + envelope.message.size();
         }
-        auto old_buffer_size = buffers_[receiver].size();
+        auto old_buffer_size = buffer.size();
         bool overflow = false;
-        if (check_for_buffer_overflow(receiver, estimated_new_buffer_size - old_buffer_size)) {
+        if (check_for_buffer_overflow(buffer, estimated_new_buffer_size - old_buffer_size)) {
+            //TODO: prevent additional lookup
             flush_buffer(receiver);
             overflow = true;
         }
         PEID rank;
-        merge(buffers_[receiver], receiver, queue_.rank(), std::move(envelope));
-        auto new_buffer_size = buffers_[receiver].size();
+        merge(buffer, receiver, queue_.rank(), std::move(envelope));
+        auto new_buffer_size = buffer.size();
         global_buffer_size_ += new_buffer_size - old_buffer_size;
         return overflow;
     }
 
-    bool post_message(MessageRange<MessageType> auto const& message, PEID receiver, int tag = 0) {
+    bool post_message(MessageRange<MessageType> auto message, PEID receiver, int tag = 0) {
         return post_message(message, receiver, rank(), receiver, tag);
     }
 
@@ -171,7 +173,7 @@ public:
     void local_threshold(size_t threshold) {
         local_threshold_ = threshold;
         for (auto& [receiver, buffer] : buffers_) {
-            if (check_for_local_buffer_overflow(receiver, 0)) {
+            if (check_for_local_buffer_overflow(buffer, 0)) {
                 flush_buffer(receiver);
             }
         }
@@ -240,16 +242,22 @@ private:
     }
 
     bool check_for_global_buffer_overflow(std::uint64_t buffer_size_delta) const {
+        if (global_threshold_ == std::numeric_limits<size_t>::max()) {
+            return false;
+        }
         return global_buffer_size_ + buffer_size_delta > global_threshold_;
     }
 
-    bool check_for_local_buffer_overflow(PEID receiver, std::uint64_t buffer_size_delta) const {
-        return buffers_.at(receiver).size() + buffer_size_delta > local_threshold_;
+    bool check_for_local_buffer_overflow(BufferContainer const& buffer, std::uint64_t buffer_size_delta) const {
+        if (local_threshold_ == std::numeric_limits<size_t>::max()) {
+            return false;
+        }
+        return buffer.size() + buffer_size_delta > local_threshold_;
     }
 
-    bool check_for_buffer_overflow(PEID receiver, std::uint64_t buffer_size_delta) const {
+    bool check_for_buffer_overflow(BufferContainer const& buffer, std::uint64_t buffer_size_delta) const {
         return check_for_global_buffer_overflow(buffer_size_delta) ||
-               check_for_local_buffer_overflow(receiver, buffer_size_delta);
+               check_for_local_buffer_overflow(buffer, buffer_size_delta);
     }
     MessageQueue<BufferType> queue_;
     BufferMap buffers_;
