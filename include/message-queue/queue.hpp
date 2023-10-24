@@ -20,6 +20,7 @@
 #pragma once
 
 #include <mpi.h>
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <deque>
