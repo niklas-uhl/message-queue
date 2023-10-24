@@ -65,10 +65,6 @@ int main(int argc, char* argv[]) {
     for (size_t i = 0; i < iterations; i++) {
         MPI_Barrier(MPI_COMM_WORLD);
         double start = MPI_Wtime();
-        double wait_all_time = 0;
-        double test_some_time = 0;
-        double test_any_time = 0;
-        double test_time = 0;
         int local_max_test_size = 0;
         size_t local_max_active_requests = 0;
 
@@ -109,17 +105,9 @@ int main(int argc, char* argv[]) {
         queue.poll(on_message);
         queue.terminate(on_message);
         using namespace std::chrono;
-        wait_all_time = duration_cast<duration<double>>(queue.wait_all_time()).count();
-        test_some_time = duration_cast<duration<double>>(queue.test_some_time()).count();
-        test_any_time = duration_cast<duration<double>>(queue.test_any_time()).count();
-        test_time = duration_cast<duration<double>>(queue.test_time()).count();
-        local_max_test_size = queue.max_test_size();
         local_max_active_requests = queue.max_active_requests();
         MPI_Barrier(MPI_COMM_WORLD);
         double end = MPI_Wtime();
-        double local_times[4] = {wait_all_time, test_some_time, test_any_time, test_time};
-        double max_times[4];
-        MPI_Reduce(&local_times, &max_times, 4, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
         int global_max_test_size;
         MPI_Reduce(&local_max_test_size, &global_max_test_size, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
 
@@ -139,10 +127,6 @@ int main(int argc, char* argv[]) {
         }
         stats["ranks"] = fmt::format("{}", size);
         stats["time"] = fmt::format("{}", end - start);
-        stats["wait_all_time"] = fmt::format("{}", max_times[0]);
-        stats["test_some_time"] = fmt::format("{}", max_times[1]);
-        stats["test_any_time"] = fmt::format("{}", max_times[2]);
-        stats["test_time"] = fmt::format("{}", max_times[3]);
         stats["iteration"] = fmt::format("{}", i);
         stats["max_test_size"] = fmt::format("{}", global_max_test_size);
         stats["max_active_requests"] = fmt::format("{}", global_max_active_requests);

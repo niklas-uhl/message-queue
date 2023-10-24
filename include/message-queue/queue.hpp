@@ -21,7 +21,6 @@
 
 #include <mpi.h>
 #include <algorithm>
-#include <chrono>
 #include <cstddef>
 #include <deque>
 #include <kassert/kassert.hpp>
@@ -396,7 +395,6 @@ public:
         // check for finished sends and try starting new ones
         bool something_happenend = false;
         if (!use_test_any_) {
-            auto start = std::chrono::high_resolution_clock::now();
             if (!use_custom_implementation_) {
                 request_pool.test_some([&](int completed_request_index) {
                     in_transit_messages[completed_request_index] = {comm_};
@@ -410,13 +408,10 @@ public:
                     try_send_something(completed_request_index);
                 });
             }
-            auto end = std::chrono::high_resolution_clock::now();
-            test_some_time_ += (end - start);
         } else {
             bool progress = true;
             while (progress) {
                 progress = false;
-                auto start = std::chrono::high_resolution_clock::now();
                 if (!use_custom_implementation_) {
                     request_pool.test_any([&](int completed_request_index) {
                         in_transit_messages[completed_request_index] = {comm_};
@@ -432,8 +427,6 @@ public:
                         try_send_something(completed_request_index);
                     });
                 }
-                auto end = std::chrono::high_resolution_clock::now();
-                test_any_time_ += (end - start);
             }
         }
         while (try_send_something()) {
@@ -453,10 +446,7 @@ public:
             receive_requests.push_back(recv_req);
             messages_to_receive.emplace_back(std::move(recv_handle));
         }
-        auto begin = std::chrono::high_resolution_clock::now();
         MPI_Waitall(static_cast<int>(receive_requests.size()), receive_requests.data(), MPI_STATUSES_IGNORE);
-        auto end = std::chrono::high_resolution_clock::now();
-        wait_all_time_ += (end - begin);
         receive_requests.clear();
         for (auto& handle : messages_to_receive) {
             // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
@@ -591,30 +581,6 @@ public:
         return terminate(on_message, [] {});
     }
 
-    auto wait_all_time() const {
-        return wait_all_time_;
-    }
-
-    auto test_some_time() const {
-        return test_some_time_;
-    }
-
-    auto test_any_time() const {
-        return test_any_time_;
-    }
-
-    auto test_time() const {
-        if (use_test_any_) {
-            return test_any_time();
-        } else {
-            return test_some_time();
-        }
-    }
-
-    auto max_test_size() const {
-        return request_pool.max_test_size();
-    }
-
     auto max_active_requests() const {
         return request_pool.max_active_requests();
     }
@@ -644,9 +610,6 @@ private:
     MPI_Comm comm_;
     PEID rank_;
     PEID size_;
-    std::chrono::high_resolution_clock::duration wait_all_time_;
-    std::chrono::high_resolution_clock::duration test_some_time_;
-    std::chrono::high_resolution_clock::duration test_any_time_;
     TerminationState termination_state = TerminationState::active;
     size_t number_of_waves = 0;
     bool use_test_any_ = false;
