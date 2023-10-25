@@ -24,6 +24,13 @@
 #include <random>
 #include <range/v3/all.hpp>
 
+std::map<std::string, message_queue::FlushStrategy> flush_strategy_map{
+    {"global", message_queue::FlushStrategy::global},
+    {"local", message_queue::FlushStrategy::local},
+    {"random", message_queue::FlushStrategy::random},
+    {"largest", message_queue::FlushStrategy::largest},
+};
+
 auto main(int argc, char* argv[]) -> int {
     MPI_Init(nullptr, nullptr);
     CLI::App app;
@@ -37,6 +44,10 @@ auto main(int argc, char* argv[]) -> int {
 
     size_t number_of_messages = 5;
     app.add_option("--number_of_messages", number_of_messages, "The number of messages to send from each PE");
+
+    message_queue::FlushStrategy flush_strategy = message_queue::FlushStrategy::global;
+    app.add_option("--flush_strategy", flush_strategy, "The flush strategy to use")
+        ->transform(CLI::CheckedTransformer(flush_strategy_map, CLI::ignore_case));
 
     CLI11_PARSE(app, argc, argv);
 
@@ -80,6 +91,7 @@ auto main(int argc, char* argv[]) -> int {
     if (local_threshold != std::numeric_limits<size_t>::max()) {
         queue.local_threshold(local_threshold);
     }
+    queue.flush_strategy(flush_strategy);
     for (auto i = 0; i < number_of_messages; ++i) {
         int destination = dist(gen);
         int message_size = message_size_dist(gen);

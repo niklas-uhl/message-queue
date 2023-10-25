@@ -79,7 +79,11 @@ public:
                       PEID envelope_sender,
                       PEID envelope_receiver,
                       int tag) {
-        auto& buffer = buffers_[receiver];
+        auto it = buffers_.find(receiver);
+        if (it == buffers_.end()) {
+            it = buffers_.emplace(receiver, BufferContainer {}).first;
+        }
+        auto& buffer = it->second;
         auto envelope = MessageEnvelope{
             .message = std::move(message), .sender = envelope_sender, .receiver = envelope_receiver, .tag = tag};
         size_t estimated_new_buffer_size;
@@ -91,8 +95,7 @@ public:
         auto old_buffer_size = buffer.size();
         bool overflow = false;
         if (check_for_buffer_overflow(buffer, estimated_new_buffer_size - old_buffer_size)) {
-            //TODO: prevent additional lookup
-            flush_buffer(receiver);
+            resolve_overflow(it);
             overflow = true;
         }
         PEID rank;
@@ -118,19 +121,12 @@ public:
         flush_buffer_impl(it);
     }
 
-    void flush_largest_buffer() {
-        auto largest_buffer = std::max_element(buffers_.begin(), buffers_.end(),
-                                               [](auto& a, auto& b) { return a.second.size() < b.second.size(); });
-        if (largest_buffer != buffers_.end()) {
-            flush_buffer_impl(largest_buffer);
-        }
+    void flush_all_buffers() {
+        flush_all_buffers_impl(buffers_.end());
     }
 
-    void flush_all_buffers() {
-        auto it = buffers_.begin();
-        while (it != buffers_.end()) {
-            it = flush_buffer_impl(it);
-        }
+    void flush_largest_buffer() {
+        flush_largest_buffer_impl(buffers_.end());
     }
 
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
@@ -210,7 +206,7 @@ public:
     }
 
 private:
-    auto flush_buffer_impl(BufferMap::iterator buffer_it) {
+    auto flush_buffer_impl(BufferMap::iterator buffer_it, bool erase = true) {
         KASSERT(buffer_it != buffers_.end(), "Trying to flush non-existing buffer.");
         auto& [receiver, buffer] = *buffer_it;
         if (buffer.empty()) {
@@ -224,7 +220,26 @@ private:
         }
         queue_.post_message(std::move(buffer), receiver);
         global_buffer_size_ -= pre_cleanup_buffer_size;
-        return buffers_.erase(buffer_it);
+        if (erase) {
+            return buffers_.erase(buffer_it);
+        } else {
+            return ++buffer_it;
+        }
+    }
+
+    void flush_all_buffers_impl(BufferMap::iterator current_buffer) {
+        auto it = buffers_.begin();
+        while (it != buffers_.end()) {
+            it = flush_buffer_impl(it, it != current_buffer);
+        }
+    }
+
+    void flush_largest_buffer_impl(BufferMap::iterator current_buffer) {
+        auto largest_buffer = std::max_element(buffers_.begin(), buffers_.end(),
+                                               [](auto& a, auto& b) { return a.second.size() < b.second.size(); });
+        if (largest_buffer != buffers_.end()) {
+            flush_buffer_impl(largest_buffer, largest_buffer != current_buffer);
+        }
     }
 
     auto split_handler(MessageHandler<MessageType> auto&& on_message) {
@@ -235,18 +250,18 @@ private:
         };
     }
 
-    void resolve_overflow(PEID receiver) {
+    void resolve_overflow(BufferMap::iterator current_buffer) {
         switch (flush_strategy_) {
             case FlushStrategy::local:
-                flush_buffer(receiver);
+                flush_buffer_impl(current_buffer, /*erase=*/false);
                 break;
             case FlushStrategy::global:
-                flush_all_buffers();
+                flush_all_buffers_impl(current_buffer);
                 break;
             case FlushStrategy::random:
                 throw std::runtime_error("Random flush strategy not implemented");
             case FlushStrategy::largest:
-                flush_largest_buffer();
+                flush_largest_buffer_impl(current_buffer);
                 break;
         }
     }
