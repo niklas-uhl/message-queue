@@ -72,7 +72,9 @@ public:
                                std::move(splitter),
                                std::move(cleaner)) {}
 
-    bool post_message(MessageRange<MessageType> auto message,
+    /// Note: messages have to be passed as rvalues. If you want to send static
+    /// data without an additional copy, wrap it in a std::ranges::ref_view.
+    bool post_message(InputMessageRange<MessageType> auto&& message,
                       PEID receiver,
                       PEID envelope_sender,
                       PEID envelope_receiver,
@@ -100,8 +102,10 @@ public:
         return overflow;
     }
 
-    bool post_message(MessageRange<MessageType> auto message, PEID receiver, int tag = 0) {
-        return post_message(message, receiver, rank(), receiver, tag);
+    /// Note: messages have to be passed as rvalues. If you want to send static
+    /// data without an additional copy, wrap it in a std::ranges::ref_view.
+    bool post_message(InputMessageRange<MessageType> auto&& message, PEID receiver, int tag = 0) {
+        return post_message(std::move(message), receiver, rank(), receiver, tag);
     }
 
     bool post_message(MessageType message, PEID receiver, int tag = 0) {
@@ -129,10 +133,16 @@ public:
         }
     }
 
+    /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
+    /// (not necessarily the underlying data) is moved to the handler when
+    /// called.
     bool poll(MessageHandler<MessageType> auto&& on_message) {
         return queue_.poll(split_handler(on_message));
     }
 
+    /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
+    /// (not necessarily the underlying data) is moved to the handler when
+    /// called.
     bool terminate(MessageHandler<MessageType> auto&& on_message) {
         auto before_next_message_counting_round_hook = [&] {
             flush_all_buffers();
