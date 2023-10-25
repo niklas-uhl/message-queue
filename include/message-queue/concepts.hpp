@@ -39,9 +39,13 @@ concept MessageRange =
     std::ranges::input_range<Range> && std::ranges::sized_range<Range> &&
     (std::same_as<void, MessageType> || std::same_as<MessageType, std::ranges::range_value_t<Range>>);
 
-static_assert(MessageRange<std::vector<int>, int>);
-static_assert(MessageRange<std::ranges::single_view<int>, int>);
-static_assert(MessageRange<std::ranges::empty_view<int>, int>);
+template <typename Range, typename MessageType = void>
+concept InputMessageRange = !std::is_lvalue_reference_v<Range> && MessageRange<Range, MessageType>;
+
+
+static_assert(InputMessageRange<std::vector<int>, int>);
+static_assert(InputMessageRange<std::ranges::single_view<int>, int>);
+static_assert(InputMessageRange<std::ranges::empty_view<int>, int>);
 
 enum class EnvelopeType { tag, full };
 

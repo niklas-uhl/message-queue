@@ -97,7 +97,7 @@ public:
     IndirectionAdapter(BufferedQueueType queue)
         : BufferedQueueType(std::move(queue)), indirection_(this->communicator()) {}
 
-    bool post_message(MessageRange<typename queue_type::message_type> auto const& message,
+    bool post_message(InputMessageRange<typename queue_type::message_type> auto&& message,
                       PEID receiver,
                       PEID envelope_sender,
                       PEID envelope_receiver,
@@ -109,24 +109,34 @@ public:
         } else {
             next_hop = indirection_.next_hop(envelope_sender, envelope_receiver);
         }
-        return queue_type::post_message(message, next_hop, envelope_sender, envelope_receiver, tag);
+        return queue_type::post_message(std::move(message), next_hop, envelope_sender, envelope_receiver, tag);
     }
 
-    bool post_message(MessageRange<typename queue_type::message_type> auto const& message,
+    /// Note: messages have to be passed as rvalues. If you want to send static
+    /// data without an additional copy, wrap it in a std::ranges::ref_view.
+    bool post_message(InputMessageRange<typename queue_type::message_type> auto&& message,
                       PEID receiver,
                       int tag = 0,
                       bool direct_send = false) {
-        return post_message(message, receiver, this->rank(), receiver, tag, direct_send);
+        return post_message(std::move(message), receiver, this->rank(), receiver, tag, direct_send);
     }
 
+    /// Note: messages have to be passed as rvalues. If you want to send static
+    /// data without an additional copy, wrap it in a std::ranges::ref_view.
     bool post_message(typename queue_type::message_type message, PEID receiver, int tag = 0, bool direct_send = false) {
         return post_message(std::ranges::views::single(message), receiver, tag, direct_send);
     }
 
+    /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
+    /// (not necessarily the underlying data) is moved to the handler when
+    /// called.
     bool poll(MessageHandler<typename queue_type::message_type> auto&& on_message) {
         return queue_type::poll(redirection_handler(on_message));
     }
 
+    /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
+    /// (not necessarily the underlying data) is moved to the handler when
+    /// called.
     bool terminate(MessageHandler<typename queue_type::message_type> auto&& on_message) {
         return queue_type::terminate(redirection_handler(on_message));
     }
