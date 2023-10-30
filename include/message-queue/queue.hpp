@@ -356,7 +356,7 @@ public:
           request_pool(num_request_slots),
           in_transit_messages(num_request_slots),
           messages_to_receive(),
-          receive_requests(),
+          receive_requests(num_request_slots, MPI_REQUEST_NULL),
           request_id_(0),
           comm_(comm),
           rank_(0),
@@ -435,28 +435,35 @@ public:
     }
 
     bool probe_for_messages(MessageHandler<T, MessageContainer> auto&& on_message) {
+        // TODO: limit the number of messages to probe for
         bool something_happenend = false;
+        size_t num_recv_requests = 0;
+        auto receive_chunk = [&] {
+            MPI_Waitall(static_cast<int>(num_recv_requests), receive_requests.data(), MPI_STATUSES_IGNORE);
+            for (auto& handle : messages_to_receive) {
+                // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
+                local_message_count.receive++;
+                on_message(MessageEnvelope{.message = handle.extract_message(),
+                                        .sender = handle.sender(),
+                                        .receiver = rank_,
+                                        .tag = handle.tag()});
+            }
+            messages_to_receive.clear();
+        };
         while (auto probe_result = internal::handles::probe(comm_)) {
             something_happenend = true;
             auto recv_handle = probe_result->template handle<T, MessageContainer>();
             // atomic_debug(fmt::format("probed msg from {}", recv_handle.sender));
             MPI_Request recv_req;
-            recv_handle.set_request(&recv_req);
+            recv_handle.set_request(&receive_requests[num_recv_requests++]);
             recv_handle.start_receive();
-            receive_requests.push_back(recv_req);
             messages_to_receive.emplace_back(std::move(recv_handle));
+            if(num_recv_requests >= receive_requests.size()) {
+                receive_chunk();
+                num_recv_requests = 0;
+            }
         }
-        MPI_Waitall(static_cast<int>(receive_requests.size()), receive_requests.data(), MPI_STATUSES_IGNORE);
-        receive_requests.clear();
-        for (auto& handle : messages_to_receive) {
-            // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
-            local_message_count.receive++;
-            on_message(MessageEnvelope{.message = handle.extract_message(),
-                                       .sender = handle.sender(),
-                                       .receiver = rank_,
-                                       .tag = handle.tag()});
-        }
-        messages_to_receive.clear();
+        receive_chunk();
         return something_happenend;
     }
 
