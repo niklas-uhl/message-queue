@@ -22,7 +22,7 @@
 #ifdef MESSAGE_QUEUE_USE_BOOST
 #include <boost/mpi/datatype.hpp>
 #else
-#include <kamping/mpi_datatype.hpp>
+#include "./external/kamping_mpi_datatype.hpp"
 #endif
 #include <utility>
 
@@ -32,7 +32,7 @@ template <typename T>
 constexpr bool is_builtin_mpi_type = boost::mpi::is_mpi_builtin_datatype<T>::value;
 #else
 template <typename T>
-constexpr bool is_builtin_mpi_type = kamping::mpi_type_traits<T>::is_builtin;
+constexpr bool is_builtin_mpi_type = mq_kamping::mpi_type_traits<T>::is_builtin;
 #endif
 template <typename T, typename Enable = void>
 struct mpi_type_traits {};
@@ -43,7 +43,7 @@ struct mpi_type_traits<T, std::enable_if_t<is_builtin_mpi_type<T>>> {
 #ifdef MESSAGE_QUEUE_USE_BOOST
         return boost::mpi::get_mpi_datatype<T>();
 #else
-        return kamping::mpi_type_traits<T>::data_type();
+        return mq_kamping::mpi_type_traits<T>::data_type();
 #endif
     }
 };

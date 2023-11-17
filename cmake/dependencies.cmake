@@ -41,15 +41,6 @@ if(MESSAGE_QUEUE_USE_BOOST)
       FATAL_ERROR
       "Boost not on your system. Please set MESSAGE_QUEUE_USE_BOOST to OFF or install Boost.")
   endif()
-else()
-  FetchContent_Declare(
-    kamping
-    URL ${CMAKE_CURRENT_LIST_DIR}/../external/kamping/
-    OVERRIDE_FIND_PACKAGE
-    SYSTEM
-  )
-  find_package(kamping REQUIRED)
-  target_link_libraries(message_queue_dependencies INTERFACE kamping::kamping)
 endif()
 
 if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME OR MESSAGE_QUEUE_BUILD_EXAMPLES)
