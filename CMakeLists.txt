@@ -18,8 +18,6 @@ include(cmake/setup_assertion_level.cmake)
 find_package(kassert REQUIRED)
 if (MESSAGE_QUEUE_USE_BOOST)
   find_package(Boost REQUIRED COMPONENTS mpi)
-else()
-  find_package(kamping REQUIRED)
 endif()
 
 set(message_queue_source_files
