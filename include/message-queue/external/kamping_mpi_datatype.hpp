@@ -29,7 +29,7 @@
 
 #include <mpi.h>
 
-namespace kamping {
+namespace mq_kamping {
 /// @brief Wrapper around bool to allow handling containers of boolean values
 class kabool {
 public:

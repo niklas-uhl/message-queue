@@ -30,6 +30,28 @@ std::map<std::string, message_queue::FlushStrategy> flush_strategy_map{
     {"largest", message_queue::FlushStrategy::largest},
 };
 
+static int pending_receives = 0;
+static int max_pending_receives = 0;
+
+int MPI_Imrecv(void *buf, int count, MPI_Datatype type, MPI_Message *message, MPI_Request *request) {
+    pending_receives++;
+    max_pending_receives = std::max(max_pending_receives, pending_receives);
+    return PMPI_Imrecv(buf, count, type, message, request);
+}
+
+int MPI_Waitall(int count, MPI_Request *array_of_requests, MPI_Status *array_of_statuses) {
+    if (pending_receives != count) {
+        std::cout << "pending_receives = " << pending_receives << ", count = " << count << "\n";
+    }
+    pending_receives -= count;
+    return PMPI_Waitall(count, array_of_requests, array_of_statuses);
+}
+
+int MPI_Finalize() {
+    std::cout << "max_pending_receives = " << max_pending_receives << "\n";
+    return PMPI_Finalize();
+}
+
 auto main(int argc, char* argv[]) -> int {
     MPI_Init(nullptr, nullptr);
     CLI::App app;

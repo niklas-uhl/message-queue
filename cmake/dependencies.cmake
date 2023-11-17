@@ -9,13 +9,6 @@ FetchContent_Declare(
 )
 
 FetchContent_Declare(
-  kamping
-  URL ${CMAKE_CURRENT_LIST_DIR}/../external/kamping/
-  OVERRIDE_FIND_PACKAGE
-  SYSTEM
-)
-
-FetchContent_Declare(
   range-v3
   URL https://github.com/ericniebler/range-v3/archive/0.12.0.zip
   OVERRIDE_FIND_PACKAGE
