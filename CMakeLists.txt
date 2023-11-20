@@ -20,6 +20,12 @@ if (MESSAGE_QUEUE_USE_BOOST)
   find_package(Boost REQUIRED COMPONENTS mpi)
 endif()
 
+try_compile(
+  MESSAGE_QUEUE_HAS_LAZY_SPLIT_VIEW
+  SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/compile_check.cpp
+  CXX_STANDARD 20
+)
+
 set(message_queue_source_files
   src/queue.cpp
   src/buffered_queue.cpp
@@ -42,8 +48,13 @@ else()
 endif()
 target_compile_features(message-queue PUBLIC cxx_std_20)
 if(MESSAGE_QUEUE_USE_MY_TEST_FUNCTIONS)
-  target_compile_definitions(message-queue
-                             PUBLIC MESSAGE_QUEUE_USE_MY_TEST_FUNCTIONS)
+  target_compile_definitions(message-queue PUBLIC MESSAGE_QUEUE_USE_MY_TEST_FUNCTIONS)
+endif()
+if (NOT MESSAGE_QUEUE_HAS_LAZY_SPLIT_VIEW)
+  message(STATUS "Your compiler has std::views::split implementation which is lazy, see the caveats in the README")
+  target_compile_definitions(message-queue PUBLIC MESSAGE_QUEUE_SPLIT_VIEW_IS_LAZY)
+else()
+  message(STATUS "Compiler supports std::views::split and std::views::lazy_split")
 endif()
 add_library(message-queue::message-queue ALIAS message-queue)
 

@@ -19,6 +19,7 @@
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>
+#include <span>
 #include <message-queue/buffered_queue.hpp>
 #include <message-queue/concepts.hpp>
 #include <message-queue/indirection.hpp>
@@ -39,10 +40,16 @@ auto main() -> int {
     };
     auto splitter = [](auto const& buffer, message_queue::PEID buffer_origin, message_queue::PEID my_rank) {
         return buffer | std::ranges::views::split(-1) | std::ranges::views::transform([](auto&& chunk) {
-                   auto sender = chunk[0];
-                   auto receiver = chunk[1];
-                   auto tag = chunk[2];
-                   auto message = chunk | std::ranges::views::drop(3);
+#ifdef MESSAGE_QUEUE_SPLIT_VIEW_IS_LAZY
+                   auto size = std::ranges::distance(chunk);
+                   auto sized_chunk = std::span(chunk.begin().base(), size);
+#else
+                   auto sized_chunk = std::move(chunk);
+#endif
+                   auto sender = sized_chunk[0];
+                   auto receiver = sized_chunk[1];
+                   auto tag = sized_chunk[2];
+                   auto message = sized_chunk | std::ranges::views::drop(3);
                    return message_queue::MessageEnvelope{
                        .message = std::move(message), .sender = sender, .receiver = receiver, .tag = tag};
                });
