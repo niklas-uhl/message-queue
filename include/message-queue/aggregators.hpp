@@ -20,6 +20,7 @@
 #pragma once
 
 #include <iterator>
+#include <span>
 #include "message-queue/concepts.hpp"
 
 namespace message_queue::aggregation {
@@ -80,8 +81,14 @@ struct SentinelSplitter {
     auto operator()(MPIBuffer<BufferType> auto const& buffer, PEID buffer_origin, PEID my_rank) const {
         return std::views::split(buffer, sentinel_) |
                std::views::transform([&, buffer_origin = buffer_origin, my_rank = my_rank](auto&& range) {
+#ifdef MESSAGE_QUEUE_SPLIT_VIEW_IS_LAZY
+                   auto size = std::ranges::distance(range);
+                   auto sized_range = std::span(range.begin().base(), size);
+#else
+                   auto sized_range = std::move(range);
+#endif
                    return MessageEnvelope{
-                       .message = std::move(range), .sender = buffer_origin, .receiver = my_rank, .tag = 0};
+                       .message = std::move(sized_range), .sender = buffer_origin, .receiver = my_rank, .tag = 0};
                });
     }
     BufferType sentinel_;

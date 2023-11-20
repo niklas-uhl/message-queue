@@ -66,10 +66,16 @@ auto main(int argc, char* argv[]) -> int {
                     message_queue::PEID my_rank) {
         return buf | std::ranges::views::split(-1) |
                std::ranges::views::transform([&, buffer_origin = buffer_origin, my_rank = my_rank](auto&& chunk) {
-                   int tag = chunk[0];
-                   auto message = chunk | ranges::views::drop(1) | ranges::views::chunk(2) |
-                                  std::ranges::views::transform(
-                                      [&](auto const& chunk) { return std::make_pair(chunk[0], chunk[1]); });
+#ifdef MESSAGE_QUEUE_SPLIT_VIEW_IS_LAZY
+                   auto size = std::ranges::distance(chunk);
+                   auto sized_chunk = std::span(chunk.begin().base(), size);
+#else
+                   auto sized_chunk = std::move(chunk);
+#endif
+                   int tag = sized_chunk[0];
+                   auto message = sized_chunk | ranges::views::drop(1) | ranges::views::chunk(2) |
+                                  ranges::views::transform(
+                                      [](auto chunk) { return std::make_pair(chunk[0], chunk[1]); });
                    return message_queue::MessageEnvelope{
                        .message = std::move(message), .sender = buffer_origin, .receiver = my_rank, .tag = tag};
                });
@@ -96,7 +102,7 @@ auto main(int argc, char* argv[]) -> int {
         int destination = dist(gen);
         int message_size = message_size_dist(gen);
         auto message = ranges::views::ints(1, message_size) |
-                       std::views::transform([](int i) { return std::pair(i, 42); }) | ranges::to<std::vector>();
+                       ranges::views::transform([](int i) { return std::pair(i, 42); }) | ranges::to<std::vector>();
         queue.post_message(std::move(message), destination, rank);
     }
     queue.post_message(std::pair{0, 0}, 0);
