@@ -9,6 +9,7 @@ include(cmake/dependencies.cmake)
 
 try_compile(
   MESSAGE_QUEUE_HAS_LAZY_SPLIT_VIEW
+  ${CMAKE_CURRENT_BINARY_DIR}
   SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/compile_check.cpp
   CXX_STANDARD 20
 )
