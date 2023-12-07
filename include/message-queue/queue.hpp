@@ -363,6 +363,7 @@ public:
           size_(0) {
         MPI_Comm_rank(comm_, &rank_);
         MPI_Comm_size(comm_, &size_);
+        mpi_type_traits<T>::get_type();
     }
 
     MessageQueue(MPI_Comm comm = MPI_COMM_WORLD) : MessageQueue(comm, internal::comm_size(comm)) {}

@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include <tuple>
 #ifdef MESSAGE_QUEUE_USE_BOOST
 #include <boost/mpi/datatype.hpp>
 #else
@@ -70,6 +71,46 @@ struct mpi_type_traits<
         MPI_Type_commit(&type);
         return type;
     }
+};
+
+template <typename... Ts>
+struct mpi_type_traits<std::tuple<Ts...>,
+                       std::enable_if_t<(sizeof...(Ts) > 0 && (is_builtin_mpi_type<Ts> && ...))>> {
+  static MPI_Datatype get_type() {
+    static MPI_Datatype type = construct();
+    return type;
+  }
+
+  static MPI_Datatype construct() {
+    std::tuple<Ts...> t;
+    constexpr std::size_t tuple_size = sizeof...(Ts);
+
+    MPI_Datatype types[tuple_size] = {mpi_type_traits<Ts>::get_type()...};
+    int blocklens[tuple_size];
+    MPI_Aint disp[tuple_size];
+    MPI_Aint base;
+    MPI_Get_address(&t, &base);
+
+    // Calculate displacements for each tuple element using std::apply and fold expressions
+    size_t i = 0;
+    std::apply(
+        [&](auto&... elem) {
+          (
+              [&] {
+                MPI_Get_address(&elem, &disp[i]);
+                disp[i] -= base;
+                blocklens[i] = 1;
+                i++;
+              }(),
+              ...);
+        },
+        t);
+
+    MPI_Datatype type;
+    MPI_Type_create_struct(tuple_size, blocklens, disp, types, &type);
+    MPI_Type_commit(&type);
+    return type;
+  }
 };
 
 template <typename T>
