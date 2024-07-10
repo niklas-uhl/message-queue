@@ -16,6 +16,7 @@ find_package(MPI REQUIRED)
 
 include(cmake/setup_assertion_level.cmake)
 find_package(kassert REQUIRED)
+find_package(kamping REQUIRED)
 if (MESSAGE_QUEUE_USE_BOOST)
   find_package(Boost REQUIRED COMPONENTS mpi)
 endif()

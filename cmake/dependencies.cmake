@@ -1,6 +1,14 @@
 include(FetchContent)
 
 FetchContent_Declare(
+  kamping
+  GIT_REPOSITORY https://github.com/kamping-site/kamping.git
+  GIT_TAG v0.1.1
+  SYSTEM
+  OVERRIDE_FIND_PACKAGE
+)
+
+FetchContent_Declare(
   kassert
   GIT_REPOSITORY https://github.com/kamping-site/kassert.git
   GIT_TAG e683aef

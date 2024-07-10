@@ -51,17 +51,6 @@ int main(int argc, char* argv[]) {
     DEBUG_BARRIER(rank);
     const int message_size = 10;
 
-    auto merger = [](std::vector<int>& buffer, std::vector<int> msg, int) {
-        for (auto elem : msg) {
-            buffer.emplace_back(elem);
-        }
-        return msg.size();
-    };
-    auto splitter = [](std::vector<int>& buffer, auto on_message, message_queue::PEID sender) {
-        for (size_t i = 0; i < buffer.size(); i += message_size) {
-            on_message(buffer.cbegin() + i, buffer.cbegin() + i + message_size, sender);
-        }
-    };
     for (size_t i = 0; i < iterations; i++) {
         MPI_Barrier(MPI_COMM_WORLD);
         double start = MPI_Wtime();
@@ -69,8 +58,6 @@ int main(int argc, char* argv[]) {
         size_t local_max_active_requests = 0;
 
         using MessageContainer = std::vector<int>;
-        // using MessageContainer = message_queue::testing::OwnContainer<int>;
-        // using MessageContainer = std::vector<int, message_queue::testing::CustomAllocator<int>>;
 
         auto queue = message_queue::MessageQueue<int, MessageContainer>{};
         if (use_test_any) {
@@ -80,8 +67,6 @@ int main(int argc, char* argv[]) {
         eng.seed(rank);
         std::bernoulli_distribution bernoulli_dist(0.1);
         std::uniform_int_distribution<size_t> rank_dist(1, size - 1);
-        // auto queue = message_queue::make_mesqueue<int>(std::move(merger), std::move(splitter));
-        // queue.set_threshold(200);
         message_queue::PEID receiver = rank_dist(eng);
         MessageContainer message(message_size);
         message[0] = rank;
