@@ -20,12 +20,15 @@
 #pragma once
 
 #include <concepts>  // IWYU pragma: keep
+#include <kamping/mpi_datatype.hpp>
 #include <ranges>
 #include <vector>
-#include "message-queue/datatype.hpp"  // IWYU pragma: keep
 #include "message-queue/definitions.hpp"
 
 namespace message_queue {
+
+template<typename T>
+concept MPIType = kamping::has_static_type_v<T>;
 
 /// @brief a buffer directly sendable by \c std::data() and \c std::size() to an MPI call.
 template <typename Container, typename ValueType = void>

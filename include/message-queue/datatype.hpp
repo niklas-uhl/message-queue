@@ -20,32 +20,19 @@
 #pragma once
 
 #include <tuple>
-#ifdef MESSAGE_QUEUE_USE_BOOST
-#include <boost/mpi/datatype.hpp>
-#else
-#include "./external/kamping_mpi_datatype.hpp"
-#endif
+#include <kamping/mpi_datatype.hpp>
 #include <utility>
 
 namespace message_queue {
-#ifdef MESSAGE_QUEUE_USE_BOOST
-template <typename T>
-constexpr bool is_builtin_mpi_type = boost::mpi::is_mpi_builtin_datatype<T>::value;
-#else
 template <typename T>
 constexpr bool is_builtin_mpi_type = mq_kamping::mpi_type_traits<T>::is_builtin;
-#endif
 template <typename T, typename Enable = void>
 struct mpi_type_traits {};
 
 template <typename T>
 struct mpi_type_traits<T, std::enable_if_t<is_builtin_mpi_type<T>>> {
     static MPI_Datatype get_type() {
-#ifdef MESSAGE_QUEUE_USE_BOOST
-        return boost::mpi::get_mpi_datatype<T>();
-#else
-        return mq_kamping::mpi_type_traits<T>::data_type();
-#endif
+      return mq_kamping::mpi_type_traits<T>::data_type();
     }
 };
 template <typename T1, typename T2>
