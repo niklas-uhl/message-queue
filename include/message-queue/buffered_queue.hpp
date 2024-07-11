@@ -81,7 +81,7 @@ public:
                       int tag) {
         auto it = buffers_.find(receiver);
         if (it == buffers_.end()) {
-            it = buffers_.emplace(receiver, BufferContainer {}).first;
+            it = buffers_.emplace(receiver, BufferContainer{}).first;
         }
         auto& buffer = it->second;
         auto envelope = MessageEnvelope{
@@ -166,14 +166,22 @@ public:
     }
 
     void global_threshold(size_t threshold) {
-        global_threshold_ = threshold;
+        global_threshold_bytes(threshold * sizeof(BufferType));
+    }
+
+    void global_threshold_bytes(size_t threshold) {
+        global_threshold_bytes_ = threshold;
         if (check_for_global_buffer_overflow(0)) {
             flush_all_buffers();
         }
     }
 
     size_t global_threshold() const {
-        return global_threshold_;
+        return global_threshold_bytes_ / sizeof(BufferType);
+    }
+
+    size_t global_threshold_bytes() const {
+        return global_threshold_bytes_;
     }
 
     void local_threshold(size_t threshold) {
@@ -267,10 +275,10 @@ private:
     }
 
     bool check_for_global_buffer_overflow(std::uint64_t buffer_size_delta) const {
-        if (global_threshold_ == std::numeric_limits<size_t>::max()) {
+        if (global_threshold_bytes_ == std::numeric_limits<size_t>::max()) {
             return false;
         }
-        return global_buffer_size_ + buffer_size_delta > global_threshold_;
+        return (global_buffer_size_ + buffer_size_delta) * sizeof(BufferType) > global_threshold_bytes_;
     }
 
     bool check_for_local_buffer_overflow(BufferContainer const& buffer, std::uint64_t buffer_size_delta) const {
@@ -290,7 +298,7 @@ private:
     Splitter split;
     BufferCleaner pre_send_cleanup;
     size_t global_buffer_size_ = 0;
-    size_t global_threshold_ = std::numeric_limits<size_t>::max();
+    size_t global_threshold_bytes_ = std::numeric_limits<size_t>::max();
     size_t local_threshold_ = std::numeric_limits<size_t>::max();
     FlushStrategy flush_strategy_ = FlushStrategy::global;
 };
