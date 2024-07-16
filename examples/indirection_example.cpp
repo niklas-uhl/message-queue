@@ -19,10 +19,10 @@
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>
-#include <span>
 #include <message-queue/buffered_queue.hpp>
 #include <message-queue/concepts.hpp>
 #include <message-queue/indirection.hpp>
+#include <span>
 
 auto main() -> int {
     MPI_Init(nullptr, nullptr);
@@ -54,15 +54,17 @@ auto main() -> int {
                        .message = std::move(message), .sender = sender, .receiver = receiver, .tag = tag};
                });
     };
-    auto queue = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, merger, splitter);
-    auto indirection =
-        message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(queue)>{std::move(queue)};
-    indirection.post_message(42, 0);
-    indirection.terminate([](message_queue::Envelope<int> auto envelope) {
-        message_queue::atomic_debug(fmt::format("Message {} from {} arrived via {}.",
-                                                envelope.message | std::ranges::views::take(1), envelope.sender,
-                                                envelope.message | std::ranges::views::drop(1)));
-    });
+    {
+        auto queue = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, merger, splitter);
+        auto indirection =
+            message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(queue)>{std::move(queue)};
+        indirection.post_message(42, 0);
+        indirection.terminate([](message_queue::Envelope<int> auto envelope) {
+            message_queue::atomic_debug(fmt::format("Message {} from {} arrived via {}.",
+                                                    envelope.message | std::ranges::views::take(1), envelope.sender,
+                                                    envelope.message | std::ranges::views::drop(1)));
+        });
+    }
     MPI_Finalize();
     return 0;
 }

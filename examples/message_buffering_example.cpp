@@ -33,13 +33,13 @@ std::map<std::string, message_queue::FlushStrategy> flush_strategy_map{
 static int pending_receives = 0;
 static int max_pending_receives = 0;
 
-int MPI_Imrecv(void *buf, int count, MPI_Datatype type, MPI_Message *message, MPI_Request *request) {
+int MPI_Imrecv(void* buf, int count, MPI_Datatype type, MPI_Message* message, MPI_Request* request) {
     pending_receives++;
     max_pending_receives = std::max(max_pending_receives, pending_receives);
     return PMPI_Imrecv(buf, count, type, message, request);
 }
 
-int MPI_Waitall(int count, MPI_Request *array_of_requests, MPI_Status *array_of_statuses) {
+int MPI_Waitall(int count, MPI_Request* array_of_requests, MPI_Status* array_of_statuses) {
     if (pending_receives != count) {
         std::cout << "pending_receives = " << pending_receives << ", count = " << count << "\n";
     }
@@ -70,33 +70,34 @@ auto main(int argc, char* argv[]) -> int {
     app.add_option("--flush_strategy", flush_strategy, "The flush strategy to use")
         ->transform(CLI::CheckedTransformer(flush_strategy_map, CLI::ignore_case));
 
-
     CLI11_PARSE(app, argc, argv);
 
     auto printing_cleaner = [](auto& buf, message_queue::PEID receiver) {
         message_queue::atomic_debug(fmt::format("Preparing buffer {} to {}.", buf, receiver));
     };
-    auto queue = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, printing_cleaner);
-    int rank, size;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-    DEBUG_BARRIER(rank);
-    std::mt19937 gen;
-    std::uniform_int_distribution<int> dist(0, size - 1);
-    if (global_threshold != std::numeric_limits<size_t>::max()) {
-        queue.global_threshold(global_threshold);
+    {
+        auto queue = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, printing_cleaner);
+        int rank, size;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        MPI_Comm_size(MPI_COMM_WORLD, &size);
+        DEBUG_BARRIER(rank);
+        std::mt19937 gen;
+        std::uniform_int_distribution<int> dist(0, size - 1);
+        if (global_threshold != std::numeric_limits<size_t>::max()) {
+            queue.global_threshold(global_threshold);
+        }
+        if (local_threshold != std::numeric_limits<size_t>::max()) {
+            queue.local_threshold(local_threshold);
+        }
+        queue.flush_strategy(flush_strategy);
+        for (auto i = 0; i < number_of_messages; ++i) {
+            int val = dist(gen);
+            queue.post_message(val, val);
+        }
+        queue.terminate([&](message_queue::Envelope<int> auto envelope) {
+            message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", envelope.message, envelope.sender));
+        });
     }
-    if (local_threshold != std::numeric_limits<size_t>::max()) {
-        queue.local_threshold(local_threshold);
-    }
-    queue.flush_strategy(flush_strategy);
-    for (auto i = 0; i < number_of_messages; ++i) {
-        int val = dist(gen);
-        queue.post_message(val, val);
-    }
-    queue.terminate([&](message_queue::Envelope<int> auto envelope) {
-        message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", envelope.message, envelope.sender));
-    });
     MPI_Finalize();
     return 0;
 }

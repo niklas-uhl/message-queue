@@ -73,9 +73,9 @@ auto main(int argc, char* argv[]) -> int {
                    auto sized_chunk = std::move(chunk);
 #endif
                    int tag = sized_chunk[0];
-                   auto message = sized_chunk | ranges::views::drop(1) | ranges::views::chunk(2) |
-                                  ranges::views::transform(
-                                      [](auto chunk) { return std::make_pair(chunk[0], chunk[1]); });
+                   auto message =
+                       sized_chunk | ranges::views::drop(1) | ranges::views::chunk(2) |
+                       ranges::views::transform([](auto chunk) { return std::make_pair(chunk[0], chunk[1]); });
                    return message_queue::MessageEnvelope{
                        .message = std::move(message), .sender = buffer_origin, .receiver = my_rank, .tag = tag};
                });
@@ -83,50 +83,52 @@ auto main(int argc, char* argv[]) -> int {
     auto printing_cleaner = [](auto& buf, message_queue::PEID receiver) {
         message_queue::atomic_debug(fmt::format("Preparing buffer {} to {}.", buf, receiver));
     };
-    auto queue =
-        message_queue::make_buffered_queue<std::pair<int, int>, int>(MPI_COMM_WORLD, merge, split, printing_cleaner);
-    int rank, size;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-    std::mt19937 gen;
-    std::uniform_int_distribution<int> dist(0, size - 1);
-    std::uniform_int_distribution<int> message_size_dist(1, 10);
-    if (global_threshold != std::numeric_limits<size_t>::max()) {
-        queue.global_threshold(global_threshold);
-    }
-    if (local_threshold != std::numeric_limits<size_t>::max()) {
-        queue.local_threshold(local_threshold);
-    }
-    queue.flush_strategy(flush_strategy);
-    for (auto i = 0; i < number_of_messages; ++i) {
-        int destination = dist(gen);
-        int message_size = message_size_dist(gen);
-        auto message = ranges::views::ints(1, message_size) |
-                       ranges::views::transform([](int i) { return std::pair(i, 42); }) | ranges::to<std::vector>();
-        queue.post_message(std::move(message), destination, rank);
-    }
-    queue.post_message(std::pair{0, 0}, 0);
-
-    size_t zero_message_counter = 0;
-    auto handler = [&](message_queue::Envelope<std::pair<int, int>> auto envelope) {
-        message_queue::atomic_debug(
-            fmt::format("Message {} (tag={}) from {} arrived.", envelope.message, envelope.tag, envelope.sender));
-
-        if (envelope.message.size() == 1 && envelope.message[0] == std::pair{0, 0}) {
-            KASSERT(rank == 0 && envelope.tag == 0);
-            zero_message_counter++;
-        } else {
-            for (auto [i, val] : envelope.message | ranges::views::enumerate) {
-                KASSERT(i + 1 == val.first);
-                KASSERT(42 == val.second);
-            }
+    {
+        auto queue = message_queue::make_buffered_queue<std::pair<int, int>, int>(MPI_COMM_WORLD, merge, split,
+                                                                                  printing_cleaner);
+        int rank, size;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        MPI_Comm_size(MPI_COMM_WORLD, &size);
+        std::mt19937 gen;
+        std::uniform_int_distribution<int> dist(0, size - 1);
+        std::uniform_int_distribution<int> message_size_dist(1, 10);
+        if (global_threshold != std::numeric_limits<size_t>::max()) {
+            queue.global_threshold(global_threshold);
         }
-    };
-    queue.terminate(handler);
-    if (rank == 0) {
-        KASSERT(zero_message_counter == size);
-    } else {
-        KASSERT(zero_message_counter == 0);
+        if (local_threshold != std::numeric_limits<size_t>::max()) {
+            queue.local_threshold(local_threshold);
+        }
+        queue.flush_strategy(flush_strategy);
+        for (auto i = 0; i < number_of_messages; ++i) {
+            int destination = dist(gen);
+            int message_size = message_size_dist(gen);
+            auto message = ranges::views::ints(1, message_size) |
+                           ranges::views::transform([](int i) { return std::pair(i, 42); }) | ranges::to<std::vector>();
+            queue.post_message(std::move(message), destination, rank);
+        }
+        queue.post_message(std::pair{0, 0}, 0);
+
+        size_t zero_message_counter = 0;
+        auto handler = [&](message_queue::Envelope<std::pair<int, int>> auto envelope) {
+            message_queue::atomic_debug(
+                fmt::format("Message {} (tag={}) from {} arrived.", envelope.message, envelope.tag, envelope.sender));
+
+            if (envelope.message.size() == 1 && envelope.message[0] == std::pair{0, 0}) {
+                KASSERT(rank == 0 && envelope.tag == 0);
+                zero_message_counter++;
+            } else {
+                for (auto [i, val] : envelope.message | ranges::views::enumerate) {
+                    KASSERT(i + 1 == val.first);
+                    KASSERT(42 == val.second);
+                }
+            }
+        };
+        queue.terminate(handler);
+        if (rank == 0) {
+            KASSERT(zero_message_counter == size);
+        } else {
+            KASSERT(zero_message_counter == 0);
+        }
     }
     MPI_Finalize();
     return 0;

@@ -72,6 +72,11 @@ public:
                                std::move(splitter),
                                std::move(cleaner)) {}
 
+    BufferedMessageQueue(BufferedMessageQueue&&) = default;
+    BufferedMessageQueue(BufferedMessageQueue const&) = delete;
+    BufferedMessageQueue& operator=(BufferedMessageQueue&&) = default;
+    BufferedMessageQueue& operator=(BufferedMessageQueue const&) = delete;
+
     /// Note: messages have to be passed as rvalues. If you want to send static
     /// data without an additional copy, wrap it in a std::ranges::ref_view.
     bool post_message(InputMessageRange<MessageType> auto&& message,

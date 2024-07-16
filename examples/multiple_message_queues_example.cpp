@@ -36,28 +36,30 @@ auto main(int argc, char* argv[]) -> int {
     auto printing_cleaner = [](auto& buf, message_queue::PEID receiver) {
         message_queue::atomic_debug(fmt::format("Preparing buffer {} to {}.", buf, receiver));
     };
-    auto queue1 = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, printing_cleaner);
-    MPI_Comm other_comm;
-    MPI_Comm_dup(MPI_COMM_WORLD, &other_comm);
-    auto queue2 = message_queue::make_buffered_queue<int>(other_comm, printing_cleaner);
-    int rank, size;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-    DEBUG_BARRIER(rank);
-    std::mt19937 gen;
-    std::uniform_int_distribution<int> dist(0, size - 1);
-    for (auto i = 0; i < number_of_messages; ++i) {
-        int val = dist(gen);
-        queue1.post_message(1, val);
-        queue2.post_message(2, val);
-    }
-    queue2.terminate([&](message_queue::Envelope<int> auto envelope) {
-        message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", envelope.message, envelope.sender));
-    });
+    {
+        auto queue1 = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, printing_cleaner);
+        MPI_Comm other_comm;
+        MPI_Comm_dup(MPI_COMM_WORLD, &other_comm);
+        auto queue2 = message_queue::make_buffered_queue<int>(other_comm, printing_cleaner);
+        int rank, size;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        MPI_Comm_size(MPI_COMM_WORLD, &size);
+        DEBUG_BARRIER(rank);
+        std::mt19937 gen;
+        std::uniform_int_distribution<int> dist(0, size - 1);
+        for (auto i = 0; i < number_of_messages; ++i) {
+            int val = dist(gen);
+            queue1.post_message(1, val);
+            queue2.post_message(2, val);
+        }
+        queue2.terminate([&](message_queue::Envelope<int> auto envelope) {
+            message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", envelope.message, envelope.sender));
+        });
 
-    queue1.terminate([&](message_queue::Envelope<int> auto envelope) {
-        message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", envelope.message, envelope.sender));
-    });
+        queue1.terminate([&](message_queue::Envelope<int> auto envelope) {
+            message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", envelope.message, envelope.sender));
+        });
+    }
     MPI_Finalize();
     return 0;
 }

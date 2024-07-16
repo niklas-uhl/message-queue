@@ -84,7 +84,8 @@ int main(int argc, char* argv[]) {
             } else {
                 KASSERT(envelope.message.size() > 1);
                 envelope.message[1]++;
-                queue.post_message(std::move(envelope.message), (rank + rank_dist(eng)) % size);
+                queue.post_message(std::vector(envelope.message.begin(), envelope.message.end()),
+                                   (rank + rank_dist(eng)) % size);
             }
         };
         queue.poll(on_message);
