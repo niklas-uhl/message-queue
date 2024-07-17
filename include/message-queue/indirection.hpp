@@ -94,8 +94,8 @@ template <IndirectionScheme Indirector, typename BufferedQueueType>
 class IndirectionAdapter : public BufferedQueueType {
 public:
     using queue_type = BufferedQueueType;
-    IndirectionAdapter(BufferedQueueType queue)
-        : BufferedQueueType(std::move(queue)), indirection_(this->communicator()) {}
+    IndirectionAdapter(BufferedQueueType queue, Indirector indirector)
+        : BufferedQueueType(std::move(queue)), indirection_(std::move(indirector)) {}
 
     bool post_message(InputMessageRange<typename queue_type::message_type> auto&& message,
                       PEID receiver,
