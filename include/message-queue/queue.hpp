@@ -495,22 +495,43 @@ public:
     bool probe_for_messages(MessageHandler<T, MessageContainer> auto&& on_message) {
         // probe for a single large message
         probe_for_one_message(on_message, MPI_ANY_SOURCE, LARGE_MESSAGE_TAG);
-        int index = MPI_UNDEFINED;
-        int flag = true;
+        int outcount = 1;
+	std::vector<int> indices(receive_requests.size());
+	std::vector<MPI_Status> statuses(receive_requests.size());
         int count = 0;
         MPI_Status status;
         bool something_happenend = false;
-        while (flag) {
-            MPI_Testany(static_cast<int>(receive_requests.size()), receive_requests.data(), &index, &flag, &status);
-            if (flag && index != MPI_UNDEFINED) {
-                something_happenend = true;
+        while (outcount > 0) {
+            // if here no active handles, return flag=true, index=MPI_UNDEFINED
+	  MPI_Testsome(static_cast<int>(receive_requests.size()), receive_requests.data(), &outcount, indices.data(), statuses.data());
+	  // std::cout << "outcount=" << outcount << "\n";
+	  if (outcount == MPI_UNDEFINED) {
+	    throw "This should not happen";
+	  }
+	  for (int i = 0; i < outcount; i++) {
+	    something_happenend = true;
                 local_message_count.receive++;
+		auto& status = statuses[indices[i]];
+		auto& request = receive_requests[indices[i]];
+		auto& buffer = receive_buffers[indices[i]];
                 MPI_Get_count(&status, kamping::mpi_datatype<T>(), &count);
-                auto message = std::span(receive_buffers[index]).first(count);
+                auto message = std::span(buffer).first(count);
                 on_message(MessageEnvelope{
                     .message = message, .sender = status.MPI_SOURCE, .receiver = rank_, .tag = status.MPI_TAG});
-                MPI_Start(&receive_requests[index]);
-            }
+                MPI_Start(&request);
+	  }
+            // if (flag /\* && index != MPI_UNDEFINED *\/) {
+            //     if (index == MPI_UNDEFINED) {
+            //         throw "This should not happen";
+            //     }
+            //     something_happenend = true;
+            //     local_message_count.receive++;
+            //     MPI_Get_count(&status, kamping::mpi_datatype<T>(), &count);
+            //     auto message = std::span(receive_buffers[index]).first(count);
+            //     on_message(MessageEnvelope{
+            //         .message = message, .sender = status.MPI_SOURCE, .receiver = rank_, .tag = status.MPI_TAG});
+            //     MPI_Start(&receive_requests[index]);
+            // }
         }
         // TODO: limit the number of messages to probe for
 
