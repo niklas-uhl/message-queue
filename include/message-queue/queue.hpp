@@ -219,8 +219,9 @@ public:
     SendHandle(MPI_Comm comm = MPI_COMM_NULL) : MessageHandle<S, MessageContainer>(), comm_(comm) {}
 
     void initiate_send() {
+        // std::cout << "tag=" << this->tag_ << " size=" << this->message_.size() << "\n";
         // atomic_debug(fmt::format("Isend m={}, receiver={}, tag={}, comm={}", this->message_, receiver_, this->tag_,
-        //                          format(this->comm_)));
+        // format(this->comm_)));
         int err = MPI_Isend(this->message_.data(), this->message_.size(), kamping::mpi_datatype<S>(), receiver_,
                             this->tag_, this->comm_, this->request_);
         check_mpi_error(err, __FILE__, __LINE__);
@@ -352,8 +353,30 @@ class MessageQueue {
         return false;
     }
 
+    static int comm_tag_ub(MPI_Comm comm) {
+        int flag;
+        int* tag_ub;
+        MPI_Comm_get_attr(MPI_COMM_WORLD, MPI_TAG_UB, &tag_ub, &flag);
+        return *tag_ub;
+    }
+
+    void setup_receives() {
+        for (size_t i = 0; i < receive_buffers.size(); i++) {
+            auto& req = receive_requests[i];
+            if (req != MPI_REQUEST_NULL) {
+                MPI_Cancel(&req);
+                MPI_Request_free(&req);
+            }
+            auto& buf = receive_buffers[i];
+            buf.resize(reserved_receive_buffer_size_);
+            MPI_Recv_init(buf.data(), reserved_receive_buffer_size_, kamping::mpi_datatype<T>(), MPI_ANY_SOURCE,
+                          SMALL_MESSAGE_TAG, comm_, &req);
+        }
+        MPI_Startall(static_cast<int>(receive_requests.size()), receive_requests.data());
+    }
+
 public:
-    MessageQueue(MPI_Comm comm, size_t num_request_slots, size_t reserved_receive_buffer_size = 1024)
+    MessageQueue(MPI_Comm comm, size_t num_request_slots, size_t reserved_receive_buffer_size)
         : outgoing_message_box(),
           request_pool(num_request_slots),
           in_transit_messages(num_request_slots),
@@ -364,45 +387,55 @@ public:
           request_id_(0),
           comm_(comm),
           rank_(0),
-          size_(0) {
+          size_(0),
+          TAG_UB(comm_tag_ub(comm)),
+          LARGE_MESSAGE_TAG(TAG_UB - 1),
+          SMALL_MESSAGE_TAG(TAG_UB - 2) {
         MPI_Comm_rank(comm_, &rank_);
         MPI_Comm_size(comm_, &size_);
+
         // ensure that we build the datatype as early as possible
         // cast to void to silence nodiscard warning
         static_cast<void>(kamping::mpi_datatype<T>());
-        for (size_t i = 0; i < receive_buffers.size(); i++) {
-            auto& buf = receive_buffers[i];
-            buf.resize(reserved_receive_buffer_size_);
-            MPI_Recv_init(buf.data(), reserved_receive_buffer_size, kamping::mpi_datatype<T>(), MPI_ANY_SOURCE,
-                          MPI_ANY_TAG, comm_, &receive_requests[i]);
-        }
-        MPI_Startall(num_request_slots, receive_requests.data());
+        setup_receives();
     }
 
-  MessageQueue(MessageQueue&&) = default;
+    MessageQueue(MessageQueue&&) = default;
     MessageQueue(MessageQueue const&) = delete;
     MessageQueue& operator=(MessageQueue&&) = default;
     MessageQueue& operator=(MessageQueue const&) = delete;
 
-    MessageQueue(MPI_Comm comm = MPI_COMM_WORLD) : MessageQueue(comm, internal::comm_size(comm)) {}
+    MessageQueue(MPI_Comm comm = MPI_COMM_WORLD)
+        : MessageQueue(comm, internal::comm_size(comm), 32 * 1024 / sizeof(T)) {}
 
     ~MessageQueue() {
         for (auto& req : receive_requests) {
             MPI_Cancel(&req);
             MPI_Request_free(&req);
-          }
+        }
     }
 
-    void post_message(MessageContainer&& message, PEID receiver, int tag = 0) {
+    size_t reserved_receive_buffer_size() const {
+        return reserved_receive_buffer_size_;
+    }
+
+    void reserved_receive_buffer_size(size_t size) {
+        reserved_receive_buffer_size_ = size;
+        setup_receives();
+    }
+
+    void post_message(MessageContainer&& message, PEID receiver) {
         // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));
         // assert(receiver != rank_);
         if (message.size() == 0) {
             return;
         }
         internal::handles::SendHandle<T, MessageContainer> handle(comm_);
+        // std::cout << "message.size=" << message.size();
+        // std::cout << " tag=" << handle.tag() << "\n";
+        handle.set_tag(message.size() > reserved_receive_buffer_size_ ? LARGE_MESSAGE_TAG : SMALL_MESSAGE_TAG);
         handle.set_message(std::move(message));
         handle.set_receiver(receiver);
-        handle.set_tag(tag);
         handle.set_request_id(this->request_id_);
         outgoing_message_box.emplace_back(std::move(handle));
         this->request_id_++;
@@ -410,11 +443,11 @@ public:
         local_message_count.send++;
     }
 
-    void post_message(T message, PEID receiver, int tag = 0) {
+    void post_message(T message, PEID receiver) {
         // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));
         // assert(receiver != rank_);
         MessageContainer message_vector{std::move(message)};
-        post_message(std::move(message_vector), receiver, tag);
+        post_message(std::move(message_vector), receiver);
     }
 
     bool progress_sending() {
@@ -461,18 +494,24 @@ public:
     }
 
     bool probe_for_messages(MessageHandler<T, MessageContainer> auto&& on_message) {
-        int index, flag, count;
+        // probe for a single large message
+        probe_for_one_message(on_message, MPI_ANY_SOURCE, LARGE_MESSAGE_TAG);
+        int index = MPI_UNDEFINED;
+        int flag = true;
+        int count = 0;
         MPI_Status status;
         bool something_happenend = false;
-        MPI_Testany(static_cast<int>(receive_requests.size()), receive_requests.data(), &index, &flag, &status);
-        if (flag && index != MPI_UNDEFINED) {
-            something_happenend = true;
-            local_message_count.receive++;
-            MPI_Get_count(&status, kamping::mpi_datatype<T>(), &count);
-            auto message = std::span(receive_buffers[index]).first(count);
-            on_message(MessageEnvelope{
-                .message = message, .sender = status.MPI_SOURCE, .receiver = rank_, .tag = status.MPI_TAG});
-            MPI_Start(&receive_requests[index]);
+        while (flag) {
+            MPI_Testany(static_cast<int>(receive_requests.size()), receive_requests.data(), &index, &flag, &status);
+            if (flag && index != MPI_UNDEFINED) {
+                something_happenend = true;
+                local_message_count.receive++;
+                MPI_Get_count(&status, kamping::mpi_datatype<T>(), &count);
+                auto message = std::span(receive_buffers[index]).first(count);
+                on_message(MessageEnvelope{
+                    .message = message, .sender = status.MPI_SOURCE, .receiver = rank_, .tag = status.MPI_TAG});
+                MPI_Start(&receive_requests[index]);
+            }
         }
         // TODO: limit the number of messages to probe for
 
@@ -658,6 +697,9 @@ private:
     MPI_Comm comm_;
     PEID rank_;
     PEID size_;
+    const int TAG_UB;
+    const int LARGE_MESSAGE_TAG;
+    const int SMALL_MESSAGE_TAG;
     TerminationState termination_state = TerminationState::active;
     size_t number_of_waves = 0;
     bool use_test_any_ = false;

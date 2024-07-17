@@ -84,7 +84,7 @@ auto main(int argc, char* argv[]) -> int {
         message_queue::atomic_debug(fmt::format("Preparing buffer {} to {}.", buf, receiver));
     };
     {
-        auto queue = message_queue::make_buffered_queue<std::pair<int, int>, int>(MPI_COMM_WORLD, merge, split,
+      auto queue = message_queue::make_buffered_queue<std::pair<int, int>, int>(MPI_COMM_WORLD, 8, merge, split,
                                                                                   printing_cleaner);
         int rank, size;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);

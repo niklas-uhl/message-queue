@@ -55,7 +55,7 @@ auto main() -> int {
                });
     };
     {
-        auto queue = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, merger, splitter);
+      auto queue = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, 8, merger, splitter);
         auto indirection =
             message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(queue)>{std::move(queue)};
         indirection.post_message(42, 0);
