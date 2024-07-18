@@ -587,7 +587,7 @@ public:
                 // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
                 local_message_count.receive++;
                 auto message = std::span(buffer).first(handle.message_size());
-                on_message(MessageEnvelope{.message = handle.extract_message(),
+                on_message(MessageEnvelope{.message = message,
                                            .sender = handle.sender(),
                                            .receiver = rank_,
                                            .tag = handle.tag()});
