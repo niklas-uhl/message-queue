@@ -54,10 +54,11 @@ public:
 
     BufferedMessageQueue(MPI_Comm comm,
                          size_t num_request_slots,
+			 ReceiveMode receive_mode,
                          Merger merger = Merger{},
                          Splitter splitter = Splitter{},
                          BufferCleaner cleaner = BufferCleaner{})
-        : queue_(comm, num_request_slots, 32 * 1024 / sizeof(BufferType)),
+      : queue_(comm, num_request_slots, 32 * 1024 / sizeof(BufferType), receive_mode),
           merge(std::move(merger)),
           split(std::move(splitter)),
           pre_send_cleanup(std::move(cleaner)) {}

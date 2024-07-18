@@ -265,6 +265,14 @@ public:
                    this->request_);
     }
 
+    void start_receive_into(MPIBuffer<S> auto& buffer) {
+        MPI_Imrecv(buffer.data(), buffer.size(), kamping::mpi_datatype<S>(), &matched_message_, this->request_);
+    }
+
+    size_t message_size() const {
+        return this->message_size_;
+    }
+
     void receive() {
         this->message_.resize(this->message_size_);
         // atomic_debug(fmt::format("Mrecv msg={}", format(matched_message_)));
@@ -328,6 +336,8 @@ struct MessageCounter {
 
 }  // namespace internal
 
+enum class ReceiveMode { poll, posted_receives, persistent };
+
 template <MPIType T, MPIBuffer<T> MessageContainer = std::vector<T>>
 class MessageQueue {
     enum class State { posted, initiated, completed };
@@ -362,20 +372,60 @@ class MessageQueue {
     void setup_receives() {
         for (size_t i = 0; i < receive_buffers.size(); i++) {
             auto& req = receive_requests[i];
-            if (req != MPI_REQUEST_NULL) {
-                MPI_Cancel(&req);
-                MPI_Request_free(&req);
-            }
+            cancel_receive(i);
             auto& buf = receive_buffers[i];
             buf.resize(reserved_receive_buffer_size_);
-            MPI_Recv_init(buf.data(), reserved_receive_buffer_size_, kamping::mpi_datatype<T>(), MPI_ANY_SOURCE,
-                          SMALL_MESSAGE_TAG, comm_, &req);
+            init_receive(i);
+            restart_receive(i);
         }
-        MPI_Startall(static_cast<int>(receive_requests.size()), receive_requests.data());
+    }
+    void init_receive(size_t index) {
+        switch (receive_mode_) {
+            case ReceiveMode::poll:
+                return;
+            case ReceiveMode::posted_receives:
+                return;
+            case ReceiveMode::persistent:
+                auto& buf = receive_buffers[index];
+                auto& req = receive_requests[index];
+                MPI_Recv_init(buf.data(), reserved_receive_buffer_size_, kamping::mpi_datatype<T>(), MPI_ANY_SOURCE,
+                              SMALL_MESSAGE_TAG, comm_, &req);
+                return;
+        }
+    }
+
+    void restart_receive(size_t index) {
+        auto& req = receive_requests[index];
+        auto& buf = receive_buffers[index];
+        switch (receive_mode_) {
+            case ReceiveMode::poll:
+                return;
+            case ReceiveMode::posted_receives:
+                MPI_Irecv(buf.data(), reserved_receive_buffer_size_, kamping::mpi_datatype<T>(), MPI_ANY_SOURCE,
+                          SMALL_MESSAGE_TAG, comm_, &req);
+                return;
+            case ReceiveMode::persistent:
+                std::cout << "Starting request " << index << "\n";
+                MPI_Start(&req);
+                return;
+        }
+    }
+
+    void cancel_receive(size_t index) {
+        if (receive_mode_ == ReceiveMode::poll) {
+            return;
+        }
+        auto& req = receive_requests[index];
+        if (req != MPI_REQUEST_NULL) {
+            MPI_Cancel(&req);
+            if (receive_mode_ == ReceiveMode::persistent) {
+                MPI_Request_free(&req);
+            }
+        }
     }
 
 public:
-    MessageQueue(MPI_Comm comm, size_t num_request_slots, size_t reserved_receive_buffer_size)
+    MessageQueue(MPI_Comm comm, size_t num_request_slots, size_t reserved_receive_buffer_size, ReceiveMode receive_mode)
         : outgoing_message_box(),
           request_pool(num_request_slots),
           in_transit_messages(num_request_slots),
@@ -389,7 +439,8 @@ public:
           size_(0),
           TAG_UB(comm_tag_ub(comm)),
           LARGE_MESSAGE_TAG(TAG_UB - 1),
-          SMALL_MESSAGE_TAG(TAG_UB - 2) {
+          SMALL_MESSAGE_TAG(TAG_UB - 2),
+          receive_mode_(receive_mode) {
         MPI_Comm_rank(comm_, &rank_);
         MPI_Comm_size(comm_, &size_);
 
@@ -404,13 +455,15 @@ public:
     MessageQueue& operator=(MessageQueue&&) = default;
     MessageQueue& operator=(MessageQueue const&) = delete;
 
-    MessageQueue(MPI_Comm comm = MPI_COMM_WORLD)
-        : MessageQueue(comm, internal::comm_size(comm), 32 * 1024 / sizeof(T)) {}
+    // MessageQueue(MPI_Comm comm = MPI_COMM_WORLD)
+    // : MessageQueue(comm, internal::comm_size(comm), 32 * 1024 / sizeof(T)) {}
 
     ~MessageQueue() {
-        for (auto& req : receive_requests) {
-            MPI_Cancel(&req);
-            MPI_Request_free(&req);
+        if (receive_mode_ == ReceiveMode::poll) {
+            return;
+        }
+        for (size_t i = 0; i < receive_requests.size(); i++) {
+            cancel_receive(i);
         }
     }
 
@@ -492,77 +545,83 @@ public:
         return something_happenend;
     }
 
-    bool probe_for_messages(MessageHandler<T, MessageContainer> auto&& on_message) {
-        // probe for a single large message
-        probe_for_one_message(on_message, MPI_ANY_SOURCE, LARGE_MESSAGE_TAG);
+    bool probe_for_messages_persistent(MessageHandler<T, MessageContainer> auto&& on_message) {
         int outcount = 1;
-	std::vector<int> indices(receive_requests.size());
-	std::vector<MPI_Status> statuses(receive_requests.size());
+        std::vector<int> indices(receive_requests.size());
+        std::vector<MPI_Status> statuses(receive_requests.size());
         int count = 0;
         MPI_Status status;
         bool something_happenend = false;
         while (outcount > 0) {
             // if here no active handles, return flag=true, index=MPI_UNDEFINED
-	  MPI_Testsome(static_cast<int>(receive_requests.size()), receive_requests.data(), &outcount, indices.data(), statuses.data());
-	  // std::cout << "outcount=" << outcount << "\n";
-	  if (outcount == MPI_UNDEFINED) {
-	    throw "This should not happen";
-	  }
-	  for (int i = 0; i < outcount; i++) {
-	    something_happenend = true;
+            MPI_Testsome(static_cast<int>(receive_requests.size()), receive_requests.data(), &outcount, indices.data(),
+                         statuses.data());
+            // std::cout << "outcount=" << outcount << "\n";
+            if (outcount == MPI_UNDEFINED) {
+                throw "This should not happen";
+            }
+            for (int i = 0; i < outcount; i++) {
+                something_happenend = true;
                 local_message_count.receive++;
-		auto& status = statuses[i];
-		auto& request = receive_requests[indices[i]];
-		auto& buffer = receive_buffers[indices[i]];
+                auto request_index = indices[i];
+                auto& status = statuses[i];
+                auto& buffer = receive_buffers[request_index];
                 MPI_Get_count(&status, kamping::mpi_datatype<T>(), &count);
                 auto message = std::span(buffer).first(count);
                 on_message(MessageEnvelope{
                     .message = message, .sender = status.MPI_SOURCE, .receiver = rank_, .tag = status.MPI_TAG});
-                MPI_Start(&request);
-	  }
-            // if (flag /\* && index != MPI_UNDEFINED *\/) {
-            //     if (index == MPI_UNDEFINED) {
-            //         throw "This should not happen";
-            //     }
-            //     something_happenend = true;
-            //     local_message_count.receive++;
-            //     MPI_Get_count(&status, kamping::mpi_datatype<T>(), &count);
-            //     auto message = std::span(receive_buffers[index]).first(count);
-            //     on_message(MessageEnvelope{
-            //         .message = message, .sender = status.MPI_SOURCE, .receiver = rank_, .tag = status.MPI_TAG});
-            //     MPI_Start(&receive_requests[index]);
-            // }
+                restart_receive(request_index);
+            }
         }
-        // TODO: limit the number of messages to probe for
-
-        // size_t num_recv_requests = 0;
-        // auto receive_chunk = [&] {
-        //     MPI_Waitall(static_cast<int>(num_recv_requests), receive_requests.data(), MPI_STATUSES_IGNORE);
-        //     for (auto& handle : messages_to_receive) {
-        //         // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
-        //         local_message_count.receive++;
-        //         on_message(MessageEnvelope{.message = handle.extract_message(),
-        //                                    .sender = handle.sender(),
-        //                                    .receiver = rank_,
-        //                                    .tag = handle.tag()});
-        //     }
-        //     messages_to_receive.clear();
-        // };
-        // while (auto probe_result = internal::handles::probe(comm_)) {
-        //     something_happenend = true;
-        //     auto recv_handle = probe_result->template handle<T, MessageContainer>();
-        //     // atomic_debug(fmt::format("probed msg from {}", recv_handle.sender));
-        //     MPI_Request recv_req;
-        //     recv_handle.set_request(&receive_requests[num_recv_requests++]);
-        //     recv_handle.start_receive();
-        //     messages_to_receive.emplace_back(std::move(recv_handle));
-        //     if (num_recv_requests >= receive_requests.size()) {
-        //         receive_chunk();
-        //         num_recv_requests = 0;
-        //     }
-        // }
-        // receive_chunk();
         return something_happenend;
+    }
+    bool probe_for_message_probing(MessageHandler<T, MessageContainer> auto&& on_message) {
+        bool something_happenend = false;
+
+        size_t num_recv_requests = 0;
+        auto receive_chunk = [&] {
+            MPI_Waitall(static_cast<int>(num_recv_requests), receive_requests.data(), MPI_STATUSES_IGNORE);
+
+            for (size_t i = 0; i < messages_to_receive.size(); i++) {
+                auto& handle = messages_to_receive[i];
+                auto& buffer = receive_buffers[i];
+                // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
+                local_message_count.receive++;
+                auto message = std::span(buffer).first(handle.message_size());
+                on_message(MessageEnvelope{.message = handle.extract_message(),
+                                           .sender = handle.sender(),
+                                           .receiver = rank_,
+                                           .tag = handle.tag()});
+            }
+            messages_to_receive.clear();
+        };
+        while (auto probe_result = internal::handles::probe(comm_)) {
+            something_happenend = true;
+            auto recv_handle = probe_result->template handle<T, MessageContainer>();
+            // atomic_debug(fmt::format("probed msg from {}", recv_handle.sender));
+            MPI_Request recv_req;
+            recv_handle.set_request(&receive_requests[num_recv_requests]);
+            recv_handle.start_receive_into(receive_buffers[num_recv_requests]);
+            messages_to_receive.emplace_back(std::move(recv_handle));
+            num_recv_requests++;
+            if (num_recv_requests >= receive_requests.size()) {
+                receive_chunk();
+                num_recv_requests = 0;
+            }
+        }
+        receive_chunk();
+        return something_happenend;
+    }
+
+    bool probe_for_messages(MessageHandler<T, MessageContainer> auto&& on_message) {
+        // probe for a single large message
+        bool something_happened = probe_for_one_message(on_message, MPI_ANY_SOURCE, LARGE_MESSAGE_TAG);
+        if (receive_mode_ == ReceiveMode::poll) {
+            something_happened |= probe_for_message_probing(on_message);
+        } else {
+            something_happened |= probe_for_messages_persistent(on_message);
+        }
+        return something_happened;
     }
 
     bool probe_for_one_message(MessageHandler<T, MessageContainer> auto&& on_message,
@@ -720,6 +779,7 @@ private:
     const int TAG_UB;
     const int LARGE_MESSAGE_TAG;
     const int SMALL_MESSAGE_TAG;
+    ReceiveMode receive_mode_;
     TerminationState termination_state = TerminationState::active;
     size_t number_of_waves = 0;
     bool use_test_any_ = false;
