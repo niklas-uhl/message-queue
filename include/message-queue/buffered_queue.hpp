@@ -54,11 +54,11 @@ public:
 
     BufferedMessageQueue(MPI_Comm comm,
                          size_t num_request_slots,
-			 ReceiveMode receive_mode,
+                         ReceiveMode receive_mode,
                          Merger merger = Merger{},
                          Splitter splitter = Splitter{},
                          BufferCleaner cleaner = BufferCleaner{})
-      : queue_(comm, num_request_slots, 32 * 1024 / sizeof(BufferType), receive_mode),
+        : queue_(comm, num_request_slots, 32 * 1024 / sizeof(BufferType), receive_mode),
           merge(std::move(merger)),
           split(std::move(splitter)),
           pre_send_cleanup(std::move(cleaner)) {}
@@ -319,11 +319,12 @@ template <typename MessageType,
     requires std::same_as<BufferType, std::ranges::range_value_t<BufferContainer>>
 auto make_buffered_queue(MPI_Comm comm,
                          size_t num_request_slots = 8,
+                         ReceiveMode receive_mode = ReceiveMode::poll,
                          Merger merger = Merger{},
                          Splitter splitter = Splitter{},
                          BufferCleaner cleaner = BufferCleaner{}) {
     return BufferedMessageQueue<MessageType, BufferType, BufferContainer, Merger, Splitter, BufferCleaner>(
-        comm, num_request_slots, std::move(merger), std::move(splitter), std::move(cleaner));
+        comm, num_request_slots, receive_mode, std::move(merger), std::move(splitter), std::move(cleaner));
 }
 
 template <typename MessageType,
@@ -334,10 +335,11 @@ template <typename MessageType,
     requires std::same_as<BufferType, std::ranges::range_value_t<BufferContainer>>
 auto make_buffered_queue(MPI_Comm comm,
                          size_t num_request_slots = 8,
+                         ReceiveMode receive_mode = ReceiveMode::poll,
                          Splitter splitter = Splitter{},
                          BufferCleaner cleaner = BufferCleaner{}) {
     return BufferedMessageQueue<MessageType, BufferType, BufferContainer, aggregation::AppendMerger, Splitter,
-                                BufferCleaner>(comm, num_request_slots, aggregation::AppendMerger{},
+                                BufferCleaner>(comm, num_request_slots, receive_mode, aggregation::AppendMerger{},
                                                std::move(splitter), std::move(cleaner));
 }
 
@@ -348,10 +350,12 @@ template <typename MessageType,
     requires std::same_as<BufferType, std::ranges::range_value_t<BufferContainer>>
 auto make_buffered_queue(MPI_Comm comm = MPI_COMM_WORLD,
                          size_t num_request_slots = 8,
+                         ReceiveMode receive_mode = ReceiveMode::poll,
                          BufferCleaner cleaner = BufferCleaner{}) {
     return BufferedMessageQueue<MessageType, BufferType, BufferContainer, aggregation::AppendMerger,
-                                aggregation::NoSplitter, BufferCleaner>(
-        comm, num_request_slots, aggregation::AppendMerger{}, aggregation::NoSplitter{}, std::move(cleaner));
+                                aggregation::NoSplitter, BufferCleaner>(comm, num_request_slots, receive_mode,
+                                                                        aggregation::AppendMerger{},
+                                                                        aggregation::NoSplitter{}, std::move(cleaner));
 }
 
 }  // namespace message_queue

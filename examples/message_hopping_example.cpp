@@ -59,7 +59,8 @@ int main(int argc, char* argv[]) {
 
         using MessageContainer = std::vector<int>;
 
-        auto queue = message_queue::MessageQueue<int, MessageContainer>{};
+        auto queue = message_queue::MessageQueue<int, MessageContainer>{MPI_COMM_WORLD, 8, 100,
+                                                                        message_queue::ReceiveMode::poll};
         if (use_test_any) {
             queue.use_test_any();
         }
