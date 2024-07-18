@@ -511,7 +511,7 @@ public:
 	  for (int i = 0; i < outcount; i++) {
 	    something_happenend = true;
                 local_message_count.receive++;
-		auto& status = statuses[indices[i]];
+		auto& status = statuses[i];
 		auto& request = receive_requests[indices[i]];
 		auto& buffer = receive_buffers[indices[i]];
                 MPI_Get_count(&status, kamping::mpi_datatype<T>(), &count);
