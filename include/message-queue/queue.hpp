@@ -405,7 +405,6 @@ class MessageQueue {
                           SMALL_MESSAGE_TAG, comm_, &req);
                 return;
             case ReceiveMode::persistent:
-                std::cout << "Starting request " << index << "\n";
                 MPI_Start(&req);
                 return;
         }
