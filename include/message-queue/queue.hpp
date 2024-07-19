@@ -338,7 +338,7 @@ struct MessageCounter {
 
 enum class ReceiveMode { poll, posted_receives, persistent };
 
-template <MPIType T, MPIBuffer<T> MessageContainer = std::vector<T>>
+template <MPIType T, MPIBuffer<T> MessageContainer = std::vector<T>, MPIBuffer<T> ReceiveBufferContainer = std::vector<T>>
 class MessageQueue {
     enum class State { posted, initiated, completed };
 
@@ -587,16 +587,14 @@ public:
                 // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
                 local_message_count.receive++;
                 auto message = std::span(buffer).first(handle.message_size());
-                on_message(MessageEnvelope{.message = message,
-                                           .sender = handle.sender(),
-                                           .receiver = rank_,
-                                           .tag = handle.tag()});
+                on_message(MessageEnvelope{
+                    .message = message, .sender = handle.sender(), .receiver = rank_, .tag = handle.tag()});
             }
             messages_to_receive.clear();
         };
         while (auto probe_result = internal::handles::probe(comm_)) {
             something_happenend = true;
-            auto recv_handle = probe_result->template handle<T, MessageContainer>();
+            auto recv_handle = probe_result->template handle<T, ReceiveBufferContainer>();
             // atomic_debug(fmt::format("probed msg from {}", recv_handle.sender));
             MPI_Request recv_req;
             recv_handle.set_request(&receive_requests[num_recv_requests]);
@@ -627,7 +625,7 @@ public:
                                PEID source = MPI_ANY_SOURCE,
                                int tag = MPI_ANY_TAG) {
         if (auto probe_result = internal::handles::probe(comm_, source, tag)) {
-            auto recv_handle = probe_result->template handle<T, MessageContainer>();
+            auto recv_handle = probe_result->template handle<T, ReceiveBufferContainer>();
             MPI_Request recv_req;
             recv_handle.set_request(&recv_req);
             recv_handle.receive();
@@ -761,9 +759,9 @@ private:
     std::deque<internal::handles::SendHandle<T, MessageContainer>> outgoing_message_box;
     internal::RequestPool request_pool;
     std::vector<internal::handles::SendHandle<T, MessageContainer>> in_transit_messages;
-    std::vector<internal::handles::ReceiveHandle<T, MessageContainer>> messages_to_receive;
+    std::vector<internal::handles::ReceiveHandle<T, ReceiveBufferContainer>> messages_to_receive;
     size_t reserved_receive_buffer_size_;
-    std::vector<std::vector<T>> receive_buffers;
+    std::vector<ReceiveBufferContainer> receive_buffers;
     std::vector<MPI_Request> receive_requests;
     internal::MessageCounter local_message_count = {0, 0};
     internal::MessageCounter message_count_reduce_buffer;

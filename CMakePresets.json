@@ -36,22 +36,22 @@
         "name": "debug",
         "configuration": "Debug",
         "configurePreset": "default",
-        "jobs": 4
+        "jobs": 2
     },
                      {
         "name": "release",
         "configuration": "Release",
         "configurePreset": "default",
-        "jobs": 4
+        "jobs": 2
     },
     {
         "name": "debug-make",
         "configurePreset": "debug-make",
-        "jobs": 4
+        "jobs": 2
     },
     {
         "name": "release-make",
         "configurePreset": "release-make",
-        "jobs": 4
+        "jobs": 2
     }]
 }
