@@ -76,8 +76,7 @@ auto main(int argc, char* argv[]) -> int {
                    auto message =
                        sized_chunk | ranges::views::drop(1) | ranges::views::chunk(2) |
                        ranges::views::transform([](auto chunk) { return std::make_pair(chunk[0], chunk[1]); });
-                   return message_queue::MessageEnvelope{
-                       .message = std::move(message), .sender = buffer_origin, .receiver = my_rank, .tag = tag};
+                   return message_queue::MessageEnvelope{std::move(message), buffer_origin, my_rank, tag};
                });
     };
     auto printing_cleaner = [](auto& buf, message_queue::PEID receiver) {

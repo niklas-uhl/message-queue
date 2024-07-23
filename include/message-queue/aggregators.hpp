@@ -46,8 +46,8 @@ static_assert(EstimatingMerger<AppendMerger, int, std::vector<int>>);
 
 struct NoSplitter {
     auto operator()(MPIBuffer auto const& buffer, PEID buffer_origin, PEID my_rank) const {
-        return std::ranges::single_view(
-            MessageEnvelope{.message = buffer, .sender = buffer_origin, .receiver = my_rank, .tag = 0});
+        MessageEnvelope envelope{std::ranges::ref_view{buffer}, buffer_origin, my_rank, 0};
+        return std::ranges::single_view{std::move(envelope)};
     }
 };
 static_assert(Splitter<NoSplitter, int, std::vector<int>>);
@@ -87,8 +87,8 @@ struct SentinelSplitter {
 #else
                    auto sized_range = std::move(range);
 #endif
-                   return MessageEnvelope{
-                       .message = std::move(sized_range), .sender = buffer_origin, .receiver = my_rank, .tag = 0};
+                   static_assert(std::ranges::borrowed_range<decltype(sized_range)>);
+                   return MessageEnvelope{std::move(sized_range), buffer_origin, my_rank, 0};
                });
     }
     BufferType sentinel_;

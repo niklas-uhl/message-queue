@@ -91,8 +91,7 @@ public:
             it = buffers_.emplace(receiver, BufferContainer{}).first;
         }
         auto& buffer = it->second;
-        auto envelope = MessageEnvelope{
-            .message = std::move(message), .sender = envelope_sender, .receiver = envelope_receiver, .tag = tag};
+        auto envelope = MessageEnvelope{std::move(message), envelope_sender, envelope_receiver, tag};
         size_t estimated_new_buffer_size;
         if constexpr (aggregation::EstimatingMerger<Merger, MessageType, BufferContainer>) {
             estimated_new_buffer_size = merge.estimate_new_buffer_size(buffer, receiver, queue_.rank(), envelope);

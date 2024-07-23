@@ -27,7 +27,7 @@
 
 namespace message_queue {
 
-template<typename T>
+template <typename T>
 concept MPIType = kamping::has_static_type_v<T>;
 
 /// @brief a buffer directly sendable by \c std::data() and \c std::size() to an MPI call.
@@ -44,7 +44,6 @@ concept MessageRange =
 
 template <typename Range, typename MessageType = void>
 concept InputMessageRange = !std::is_lvalue_reference_v<Range> && MessageRange<Range, MessageType>;
-
 
 static_assert(InputMessageRange<std::vector<int>, int>);
 static_assert(InputMessageRange<std::ranges::single_view<int>, int>);
@@ -63,6 +62,12 @@ concept Envelope = requires(E envelope) {
 
 template <MessageRange MessageRangeType>
 struct MessageEnvelope {
+    explicit MessageEnvelope(MessageRangeType message, PEID sender, PEID receiver, int tag)
+        : message(std::move(message)), sender(sender), receiver(receiver), tag(tag) {}
+    // MessageEnvelope(MessageEnvelope const&) = delete;
+    // MessageEnvelope(MessageEnvelope&&) = default;
+    // MessageEnvelope& operator=(MessageEnvelope const&) = delete;
+    // MessageEnvelope& operator=(MessageEnvelope&&) = default;
     using message_range_type = MessageRangeType;
     using message_value_type = std::ranges::range_value_t<message_range_type>;
     static constexpr EnvelopeType type = EnvelopeType::full;

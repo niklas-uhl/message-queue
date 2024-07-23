@@ -338,7 +338,9 @@ struct MessageCounter {
 
 enum class ReceiveMode { poll, posted_receives, persistent };
 
-template <MPIType T, MPIBuffer<T> MessageContainer = std::vector<T>, MPIBuffer<T> ReceiveBufferContainer = std::vector<T>>
+template <MPIType T,
+          MPIBuffer<T> MessageContainer = std::vector<T>,
+          MPIBuffer<T> ReceiveBufferContainer = std::vector<T>>
 class MessageQueue {
     enum class State { posted, initiated, completed };
 
@@ -544,7 +546,7 @@ public:
         return something_happenend;
     }
 
-    bool probe_for_messages_persistent(MessageHandler<T, MessageContainer> auto&& on_message) {
+    bool probe_for_messages_persistent(MessageHandler<T, std::span<T>> auto&& on_message) {
         int outcount = 1;
         std::vector<int> indices(receive_requests.size());
         std::vector<MPI_Status> statuses(receive_requests.size());
@@ -567,14 +569,14 @@ public:
                 auto& buffer = receive_buffers[request_index];
                 MPI_Get_count(&status, kamping::mpi_datatype<T>(), &count);
                 auto message = std::span(buffer).first(count);
-                on_message(MessageEnvelope{
-                    .message = message, .sender = status.MPI_SOURCE, .receiver = rank_, .tag = status.MPI_TAG});
+                on_message(
+                    MessageEnvelope<decltype(message)>{std::move(message), status.MPI_SOURCE, rank_, status.MPI_TAG});
                 restart_receive(request_index);
             }
         }
         return something_happenend;
     }
-    bool probe_for_message_probing(MessageHandler<T, MessageContainer> auto&& on_message) {
+    bool probe_for_message_probing(MessageHandler<T, std::span<T>> auto&& on_message) {
         bool something_happenend = false;
 
         size_t num_recv_requests = 0;
@@ -587,8 +589,7 @@ public:
                 // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
                 local_message_count.receive++;
                 auto message = std::span(buffer).first(handle.message_size());
-                on_message(MessageEnvelope{
-                    .message = message, .sender = handle.sender(), .receiver = rank_, .tag = handle.tag()});
+                on_message(MessageEnvelope{std::move(message), handle.sender(), rank_, handle.tag()});
             }
             messages_to_receive.clear();
         };
@@ -610,7 +611,7 @@ public:
         return something_happenend;
     }
 
-    bool probe_for_messages(MessageHandler<T, MessageContainer> auto&& on_message) {
+    bool probe_for_messages(MessageHandler<T, std::span<T>> auto&& on_message) {
         // probe for a single large message
         bool something_happened = probe_for_one_message(on_message, MPI_ANY_SOURCE, LARGE_MESSAGE_TAG);
         if (receive_mode_ == ReceiveMode::poll) {
@@ -630,10 +631,7 @@ public:
             recv_handle.set_request(&recv_req);
             recv_handle.receive();
             local_message_count.receive++;
-            on_message(MessageEnvelope{.message = recv_handle.extract_message(),
-                                       .sender = recv_handle.sender(),
-                                       .receiver = rank_,
-                                       .tag = recv_handle.tag()});
+            on_message(MessageEnvelope{recv_handle.extract_message(), recv_handle.sender(), rank_, recv_handle.tag()});
             return true;
         }
         return false;

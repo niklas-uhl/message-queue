@@ -50,8 +50,7 @@ auto main() -> int {
                    auto receiver = sized_chunk[1];
                    auto tag = sized_chunk[2];
                    auto message = sized_chunk | std::ranges::views::drop(3);
-                   return message_queue::MessageEnvelope{
-                       .message = std::move(message), .sender = sender, .receiver = receiver, .tag = tag};
+                   return message_queue::MessageEnvelope{std::move(message), sender, receiver, tag};
                });
     };
     {
