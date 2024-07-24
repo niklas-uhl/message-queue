@@ -183,6 +183,12 @@ template <MPIType S, MPIBuffer MessageContainer = std::vector<S>>
     requires std::same_as<S, typename MessageContainer::value_type>
 class MessageHandle {
 public:
+    // MessageHandle() {};
+    // MessageHandle(MessageHandle const&) = delete;
+    // MessageHandle(MessageHandle&&) = default;
+    // MessageHandle& operator=(MessageHandle const&) = delete;
+    // MessageHandle& operator=(MessageHandle&&) = delete;
+
     bool test() {
         if (request_ == nullptr) {
             return false;
@@ -356,7 +362,8 @@ class MessageQueue {
             message_to_send.set_request(req_ptr);
             // atomic_debug(fmt::format("isend msg={}, to {}, using request {}", message_to_send.message,
             // message_to_send.receiver, index));
-            in_transit_messages[index] = std::move(message_to_send);
+            in_transit_messages.emplace(in_transit_messages.begin() + index, std::move(message_to_send));
+            // in_transit_messages[index]. = std::move(message_to_send);
             in_transit_messages[index].initiate_send();
             // KASSERT(*message_to_send.request_ != MPI_REQUEST_NULL);
             return true;
@@ -522,13 +529,13 @@ public:
         if (!use_test_any_) {
             if (!use_custom_implementation_) {
                 request_pool.test_some([&](int completed_request_index) {
-                    in_transit_messages[completed_request_index] = {comm_};
+                    in_transit_messages.emplace(in_transit_messages.begin() + completed_request_index, comm_);
                     something_happenend = true;
                     try_send_something(completed_request_index);
                 });
             } else {
                 request_pool.my_test_some([&](int completed_request_index) {
-                    in_transit_messages[completed_request_index] = {comm_};
+                    in_transit_messages.emplace(in_transit_messages.begin() + completed_request_index, comm_);
                     something_happenend = true;
                     try_send_something(completed_request_index);
                 });
@@ -539,14 +546,14 @@ public:
                 progress = false;
                 if (!use_custom_implementation_) {
                     request_pool.test_any([&](int completed_request_index) {
-                        in_transit_messages[completed_request_index] = {comm_};
+		      		  in_transit_messages.emplace(in_transit_messages.begin() + completed_request_index, comm_);
                         something_happenend = true;
                         progress = true;
                         try_send_something(completed_request_index);
                     });
                 } else {
                     request_pool.my_test_any([&](int completed_request_index) {
-                        in_transit_messages[completed_request_index] = {comm_};
+		      		      		  in_transit_messages.emplace(in_transit_messages.begin() + completed_request_index, comm_);
                         something_happenend = true;
                         progress = true;
                         try_send_something(completed_request_index);
