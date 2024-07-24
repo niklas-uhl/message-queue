@@ -79,7 +79,7 @@ private:
     std::string msg_;
 };
 
-void check_mpi_error(int errcode, const std::string& file, int line);
+void check_mpi_error(int errcode, std::string_view file, int line);
 
 template <class MessageType>
 inline void atomic_debug(MessageType message, std::ostream& out = std::cout, bool newline = true) {

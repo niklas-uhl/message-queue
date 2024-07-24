@@ -22,13 +22,13 @@
 #include <array>
 
 namespace message_queue {
-void check_mpi_error(int errcode, const std::string& file, int line) {
+void check_mpi_error(int errcode, std::string_view file, int line) {
     if (errcode != MPI_SUCCESS) {
         std::array<char, MPI_MAX_ERROR_STRING> buf;
         int resultlen;
         MPI_Error_string(errcode, buf.data(), &resultlen);
         std::string msg(buf.begin(), buf.begin() + resultlen);
-        msg = msg + " in " + file + ":" + std::to_string(line);
+        msg = msg + " in " + std::string{file} + ":" + std::to_string(line);
         throw MPIException(msg);
     }
 }
