@@ -445,9 +445,9 @@ public:
                 // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
                 local_message_count.receive++;
                 on_message(MessageEnvelope{.message = handle.extract_message(),
-                                        .sender = handle.sender(),
-                                        .receiver = rank_,
-                                        .tag = handle.tag()});
+                                           .sender = handle.sender(),
+                                           .receiver = rank_,
+                                           .tag = handle.tag()});
             }
             messages_to_receive.clear();
         };
@@ -459,7 +459,7 @@ public:
             recv_handle.set_request(&receive_requests[num_recv_requests++]);
             recv_handle.start_receive();
             messages_to_receive.emplace_back(std::move(recv_handle));
-            if(num_recv_requests >= receive_requests.size()) {
+            if (num_recv_requests >= receive_requests.size()) {
                 receive_chunk();
                 num_recv_requests = 0;
             }
@@ -560,7 +560,8 @@ public:
     }
 
     bool terminate(MessageHandler<T, MessageContainer> auto&& on_message,
-                   std::invocable<> auto&& before_next_message_counting_round_hook) {
+                   std::invocable<> auto&& before_next_message_counting_round_hook,
+                   std::invocable<> auto&& progress_hook) {
         termination_state = TerminationState::trying_termination;
         while (true) {
             before_next_message_counting_round_hook();
@@ -574,6 +575,7 @@ public:
             // we never get to poll if message counting finishes instantly
             do {
                 poll(on_message);
+                progress_hook();
                 if (termination_state == TerminationState::active) {
                     return false;
                 }
@@ -583,6 +585,14 @@ public:
                 return true;
             }
         }
+    }
+
+    bool terminate(MessageHandler<T, MessageContainer> auto&& on_message,
+                   std::invocable<> auto&& before_next_message_counting_round_hook) {
+        return terminate(
+            std::forward<decltype(on_message)>(on_message),
+            std::forward<decltype(before_next_message_counting_round_hook)>(before_next_message_counting_round_hook),
+            []() {});
     }
 
     bool terminate(MessageHandler<T, MessageContainer> auto&& on_message) {
