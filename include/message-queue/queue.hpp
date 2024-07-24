@@ -252,6 +252,19 @@ public:
         return receiver_;
     }
 
+    void swap(SendHandle& other) {
+        std::swap(this->receiver_, other.receiver_);
+        std::swap(this->comm_, other.comm_);
+        std::swap(this->request_, other.request_);
+        std::swap(this->request_id_, other.request_id_);
+        std::swap(this->tag_, other.tag_);
+        std::swap(this->message_size_, other.message_size_);
+        this->message_.swap(other.message_);
+    }
+    void emplace(SendHandle&& other) {
+        this->swap(other);
+    }
+
 private:
     PEID receiver_ = MPI_ANY_SOURCE;
     MPI_Comm comm_;
@@ -362,8 +375,7 @@ class MessageQueue {
             message_to_send.set_request(req_ptr);
             // atomic_debug(fmt::format("isend msg={}, to {}, using request {}", message_to_send.message,
             // message_to_send.receiver, index));
-            in_transit_messages.emplace(in_transit_messages.begin() + index, std::move(message_to_send));
-            // in_transit_messages[index]. = std::move(message_to_send);
+            in_transit_messages[index].swap(message_to_send);
             in_transit_messages[index].initiate_send();
             // KASSERT(*message_to_send.request_ != MPI_REQUEST_NULL);
             return true;
@@ -529,13 +541,13 @@ public:
         if (!use_test_any_) {
             if (!use_custom_implementation_) {
                 request_pool.test_some([&](int completed_request_index) {
-                    in_transit_messages.emplace(in_transit_messages.begin() + completed_request_index, comm_);
+                    in_transit_messages[completed_request_index].emplace({comm_});
                     something_happenend = true;
                     try_send_something(completed_request_index);
                 });
             } else {
                 request_pool.my_test_some([&](int completed_request_index) {
-                    in_transit_messages.emplace(in_transit_messages.begin() + completed_request_index, comm_);
+                    in_transit_messages[completed_request_index].emplace({comm_});
                     something_happenend = true;
                     try_send_something(completed_request_index);
                 });
@@ -546,14 +558,14 @@ public:
                 progress = false;
                 if (!use_custom_implementation_) {
                     request_pool.test_any([&](int completed_request_index) {
-		      		  in_transit_messages.emplace(in_transit_messages.begin() + completed_request_index, comm_);
+                        in_transit_messages[completed_request_index].emplace({comm_});
                         something_happenend = true;
                         progress = true;
                         try_send_something(completed_request_index);
                     });
                 } else {
                     request_pool.my_test_any([&](int completed_request_index) {
-		      		      		  in_transit_messages.emplace(in_transit_messages.begin() + completed_request_index, comm_);
+                        in_transit_messages[completed_request_index].emplace({comm_});
                         something_happenend = true;
                         progress = true;
                         try_send_something(completed_request_index);
