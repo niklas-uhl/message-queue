@@ -219,6 +219,10 @@ public:
     MPI_Comm communicator() const {
         return queue_.communicator();
     }
+  
+    auto& underlying() {
+        return queue_;
+    }
 
 private:
     auto flush_buffer_impl(BufferMap::iterator buffer_it, bool erase = true) {

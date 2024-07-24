@@ -583,12 +583,26 @@ public:
         // std::vector<int> indices(receive_requests.size());
         // std::vector<MPI_Status> statuses(receive_requests.size());
         int count = 0;
-        MPI_Status status;
         bool something_happenend = false;
-        while (outcount > 0) {
-            // if here no active handles, return flag=true, index=MPI_UNDEFINED
-            MPI_Testsome(static_cast<int>(receive_requests.size()), receive_requests.data(), &outcount, indices.data(),
-                         statuses.data());
+        size_t rounds = 0;
+        while (outcount > 0 && rounds < max_probe_rounds_) {
+            if (!use_test_any_) {
+                // if here no active handles, return flag=true, index=MPI_UNDEFINED
+                MPI_Testsome(static_cast<int>(receive_requests.size()), receive_requests.data(), &outcount,
+                             indices.data(), statuses.data());
+            } else {
+                int flag;
+                MPI_Testany(static_cast<int>(receive_requests.size()), receive_requests.data(), &indices[0], &flag,
+                            &statuses[0]);
+                if (flag) {
+                    if (indices[0] == MPI_UNDEFINED) {
+                        throw "This should not happen";
+                    }
+                    outcount = 1;
+                } else {
+                    outcount = 0;
+                }
+            }
             // std::cout << "outcount=" << outcount << "\n";
             if (outcount == MPI_UNDEFINED) {
                 throw "This should not happen";
@@ -605,6 +619,7 @@ public:
                     MessageEnvelope<decltype(message)>{std::move(message), status.MPI_SOURCE, rank_, status.MPI_TAG});
                 restart_receive(request_index);
             }
+            rounds++;
         }
         return something_happenend;
     }
@@ -625,6 +640,7 @@ public:
             }
             messages_to_receive.clear();
         };
+        size_t rounds = 0;
         while (auto probe_result = internal::handles::probe(comm_)) {
             something_happenend = true;
             auto recv_handle = probe_result->template handle<T, ReceiveBufferContainer>();
@@ -637,6 +653,10 @@ public:
             if (num_recv_requests >= receive_requests.size()) {
                 receive_chunk();
                 num_recv_requests = 0;
+            }
+            rounds++;
+            if (rounds >= max_probe_rounds_) {
+                break;
             }
         }
         receive_chunk();
@@ -783,6 +803,10 @@ public:
         use_test_any_ = use_it;
     }
 
+    void max_probe_rounds(size_t rounds) {
+        max_probe_rounds_ = rounds;
+    }
+
     void use_custom_implementation(bool use_it = true) {
         use_custom_implementation_ = use_it;
     }
@@ -815,6 +839,7 @@ private:
     bool allow_large_messages_ = false;
     TerminationState termination_state = TerminationState::active;
     size_t number_of_waves = 0;
+    size_t max_probe_rounds_ = std::numeric_limits<size_t>::max();
     bool use_test_any_ = false;
     bool use_custom_implementation_ = false;
 };
