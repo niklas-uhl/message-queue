@@ -29,8 +29,8 @@
 #include <ranges>  // IWYU pragma: keep
 #include <utility>
 #include <vector>
+#include <kamping/mpi_datatype.hpp>
 #include "message-queue/concepts.hpp"
-#include "message-queue/datatype.hpp"
 #include "message-queue/debug_print.hpp"
 
 namespace message_queue {
@@ -219,7 +219,7 @@ public:
     void initiate_send() {
         // atomic_debug(fmt::format("Isend m={}, receiver={}, tag={}, comm={}", this->message_, receiver_, this->tag_,
         //                          format(this->comm_)));
-        int err = MPI_Isend(this->message_.data(), this->message_.size(), message_queue::mpi_type_traits<S>::get_type(),
+      int err = MPI_Isend(this->message_.data(), this->message_.size(), kamping::mpi_datatype<S>(), 
                             receiver_, this->tag_, this->comm_, this->request_);
         check_mpi_error(err, __FILE__, __LINE__);
     }
@@ -259,14 +259,14 @@ public:
     void start_receive() {
         this->message_.resize(this->message_size_);
         // atomic_debug(fmt::format("Imrecv msg={}", format(matched_message_)));
-        MPI_Imrecv(this->message_.data(), this->message_.size(), message_queue::mpi_type_traits<S>::get_type(),
+        MPI_Imrecv(this->message_.data(), this->message_.size(), kamping::mpi_datatype<S>(),
                    &matched_message_, this->request_);
     }
 
     void receive() {
         this->message_.resize(this->message_size_);
         // atomic_debug(fmt::format("Mrecv msg={}", format(matched_message_)));
-        MPI_Mrecv(this->message_.data(), this->message_.size(), message_queue::mpi_type_traits<S>::get_type(),
+        MPI_Mrecv(this->message_.data(), this->message_.size(), kamping::mpi_datatype<S>(),
                   &this->matched_message_, MPI_STATUS_IGNORE);
     }
 
@@ -291,7 +291,7 @@ struct ProbeResult {
     ReceiveHandle<S, MessageContainer> handle() {
         ReceiveHandle<S, MessageContainer> handle;
         int message_size;
-        MPI_Get_count(&status, message_queue::mpi_type_traits<S>::get_type(), &message_size);
+        MPI_Get_count(&status, kamping::mpi_datatype<S>(), &message_size);
         handle.message_size_ = message_size;
         handle.matched_message_ = matched_message;
         handle.tag_ = status.MPI_TAG;
@@ -363,7 +363,9 @@ public:
           size_(0) {
         MPI_Comm_rank(comm_, &rank_);
         MPI_Comm_size(comm_, &size_);
-        mpi_type_traits<T>::get_type();
+	// ensure that we build the datatype as early as possible
+	// cast to void to silence nodiscard warning
+	static_cast<void>(kamping::mpi_datatype<T>());
     }
 
     MessageQueue(MPI_Comm comm = MPI_COMM_WORLD) : MessageQueue(comm, internal::comm_size(comm)) {}
@@ -545,7 +547,7 @@ public:
             message_count_reduce_buffer = local_message_count;
             // atomic_debug(fmt::format("Start reduce with {}", message_count_reduce_buffer));
             MPI_Iallreduce(MPI_IN_PLACE, &message_count_reduce_buffer, 2,
-                           message_queue::mpi_type_traits<size_t>::get_type(), MPI_SUM, comm_, &termination_request);
+                           kamping::mpi_datatype<size_t>(), MPI_SUM, comm_, &termination_request);
         }
     }
 

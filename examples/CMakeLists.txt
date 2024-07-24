@@ -1,3 +1,10 @@
+find_package(range-v3 REQUIRED)
+find_package(CLI11 REQUIRED)
+find_package(fmt REQUIRED)
+if(MESSAGE_QUEUE_BACKTRACE)
+  find_package(bakward-mpi REQUIRED)
+endif()
+
 add_executable(message_hopping_example message_hopping_example.cpp)
 target_link_libraries(
   message_hopping_example PUBLIC message-queue fmt::fmt kassert::kassert

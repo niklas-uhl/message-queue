@@ -1,82 +1,60 @@
-find_package(MPI REQUIRED)
+include(FetchContent)
 
-include(cmake/CPM.cmake)
+FetchContent_Declare(
+  kamping
+  GIT_REPOSITORY https://github.com/kamping-site/kamping.git
+  GIT_TAG v0.1.1
+  SYSTEM
+  OVERRIDE_FIND_PACKAGE
+)
 
-set(MESSAGE_QUEUE_ASSERTION_LEVEL
-    $<IF:$<CONFIG:Debug>,"normal","exceptions">
-    CACHE STRING "Assertion level")
-set_property(CACHE MESSAGE_QUEUE_ASSERTION_LEVEL
-             PROPERTY STRINGS none exceptions light normal heavy)
-message(STATUS "Assertion level: ${MESSAGE_QUEUE_ASSERTION_LEVEL}")
-string(
-  CONCAT KASSERT_ASSERTION_LEVEL
-         $<$<STREQUAL:${MESSAGE_QUEUE_ASSERTION_LEVEL},"none">:0>
-         $<$<STREQUAL:"${MESSAGE_QUEUE_ASSERTION_LEVEL}","none">:0>
-         $<$<STREQUAL:${MESSAGE_QUEUE_ASSERTION_LEVEL},"exceptions">:10>
-         $<$<STREQUAL:"${MESSAGE_QUEUE_ASSERTION_LEVEL}","exceptions">:10>
-         $<$<STREQUAL:${MESSAGE_QUEUE_ASSERTION_LEVEL},"light">:20>
-         $<$<STREQUAL:"${MESSAGE_QUEUE_ASSERTION_LEVEL}","light">:20>
-         $<$<STREQUAL:${MESSAGE_QUEUE_ASSERTION_LEVEL},"normal">:30>
-         $<$<STREQUAL:"${MESSAGE_QUEUE_ASSERTION_LEVEL}","normal">:30>
-         $<$<STREQUAL:${MESSAGE_QUEUE_ASSERTION_LEVEL},"heavy">:60>
-         $<$<STREQUAL:"${MESSAGE_QUEUE_ASSERTION_LEVEL}","heavy">:60>)
-if(NOT TARGET kassert)
-  cpmaddpackage("gh:kamping-site/kassert#e683aef")
-endif()
+FetchContent_Declare(
+  kassert
+  GIT_REPOSITORY https://github.com/kamping-site/kassert.git
+  GIT_TAG f0873f8
+  SYSTEM
+  OVERRIDE_FIND_PACKAGE
+)
 
-option(
-  MESSAGE_QUEUE_USE_BOOST
-  "Use boost.mpi for automatic mpi type deduction instead LGPL licensed parts of KaMPIng."
-  OFF)
+FetchContent_Declare(
+  range-v3
+  URL https://github.com/ericniebler/range-v3/archive/0.12.0.zip
+  OVERRIDE_FIND_PACKAGE
+  SYSTEM
+  SOURCE_SUBDIR NON_EXISTANT
+)
 
-add_library(message_queue_dependencies INTERFACE)
-if(MESSAGE_QUEUE_USE_BOOST)
-  find_package(Boost COMPONENTS mpi)
-  if(Boost_FOUND)
-    target_link_libraries(message_queue_dependencies INTERFACE Boost::mpi)
-    target_compile_definitions(message_queue_dependencies INTERFACE
-                               MESSAGE_QUEUE_USE_BOOST)
-  else()
-    message(
-      FATAL_ERROR
-      "Boost not on your system. Please set MESSAGE_QUEUE_USE_BOOST to OFF or install Boost.")
-  endif()
-endif()
-
-if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME OR MESSAGE_QUEUE_BUILD_EXAMPLES)
-  cpmaddpackage(
-    NAME
-    range-v3
-    URL
-    https://github.com/ericniebler/range-v3/archive/0.12.0.zip
-    VERSION
-    0.12.0
-    DOWNLOAD_ONLY
-    TRUE)
-  if(range-v3_ADDED)
+if(NOT EXISTS ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/range-v3-extra.cmake AND
+    NOT EXISTS ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/range-v3Extra.cmake)
+  file(WRITE ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/range-v3-extra.cmake
+[=[
     add_library(range-v3 INTERFACE IMPORTED)
     target_include_directories(range-v3
                                INTERFACE ${range-v3_SOURCE_DIR}/include)
     add_library(range-v3::range-v3 ALIAS range-v3)
-  endif()
-  cpmaddpackage("gh:CLIUtils/CLI11@2.3.2")
-  cpmaddpackage("gh:fmtlib/fmt#10.0.0")
-  cpmaddpackage(
-    NAME
-    sanitizers-cmake
-    GITHUB_REPOSITORY
-    "arsenm/sanitizers-cmake"
-    GIT_TAG
-    c3dc841
-    DOWNLOAD_ONLY
-    TRUE)
-
-  if(sanitizers-cmake_ADDED)
-    list(APPEND CMAKE_MODULE_PATH ${sanitizers-cmake_SOURCE_DIR}/cmake)
-  endif()
-  find_package(Sanitizers)
-
-  if(MESSAGE_QUEUE_BACKTRACE)
-    cpmaddpackage("gh:kamping-site/bakward-mpi#89de113")
-  endif()
+]=])
 endif()
+
+FetchContent_Declare(
+  CLI11
+  GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
+  GIT_TAG v2.3.2
+  SYSTEM
+  OVERRIDE_FIND_PACKAGE
+)
+
+FetchContent_Declare(
+  fmt
+  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+  GIT_TAG 10.1.1
+  SYSTEM
+  OVERRIDE_FIND_PACKAGE
+)
+
+FetchContent_Declare(
+  bakward-mpi
+  GIT_REPOSITORY https://github.com/kamping-site/bakward-mpi.git
+  GIT_TAG 89de113
+  SYSTEM
+  OVERRIDE_FIND_PACKAGE
+)
