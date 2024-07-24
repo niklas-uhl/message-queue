@@ -434,6 +434,8 @@ public:
           reserved_receive_buffer_size_(reserved_receive_buffer_size),
           receive_buffers(num_request_slots),
           receive_requests(num_request_slots, MPI_REQUEST_NULL),
+          indices(num_request_slots),
+          statuses(num_request_slots),
           request_id_(0),
           comm_(comm),
           rank_(0),
@@ -477,6 +479,10 @@ public:
         setup_receives();
     }
 
+    void allow_large_messages(bool allow = true) {
+        allow_large_messages_ = allow;
+    }
+
     void post_message(MessageContainer&& message, PEID receiver) {
         // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));
         // assert(receiver != rank_);
@@ -486,7 +492,14 @@ public:
         internal::handles::SendHandle<T, MessageContainer> handle(comm_);
         // std::cout << "message.size=" << message.size();
         // std::cout << " tag=" << handle.tag() << "\n";
-        handle.set_tag(message.size() > reserved_receive_buffer_size_ ? LARGE_MESSAGE_TAG : SMALL_MESSAGE_TAG);
+        int tag = SMALL_MESSAGE_TAG;
+        if (message.size() > reserved_receive_buffer_size_) {
+            if (!allow_large_messages_) {
+                throw std::runtime_error{"Large messages not allowed, enable them using allow_large_messages"};
+            }
+            tag = LARGE_MESSAGE_TAG;
+        }
+        handle.set_tag(tag);
         handle.set_message(std::move(message));
         handle.set_receiver(receiver);
         handle.set_request_id(this->request_id_);
@@ -548,8 +561,8 @@ public:
 
     bool probe_for_messages_persistent(MessageHandler<T, std::span<T>> auto&& on_message) {
         int outcount = 1;
-        std::vector<int> indices(receive_requests.size());
-        std::vector<MPI_Status> statuses(receive_requests.size());
+        // std::vector<int> indices(receive_requests.size());
+        // std::vector<MPI_Status> statuses(receive_requests.size());
         int count = 0;
         MPI_Status status;
         bool something_happenend = false;
@@ -613,7 +626,10 @@ public:
 
     bool probe_for_messages(MessageHandler<T, std::span<T>> auto&& on_message) {
         // probe for a single large message
-        bool something_happened = probe_for_one_message(on_message, MPI_ANY_SOURCE, LARGE_MESSAGE_TAG);
+        bool something_happened = false;
+        if (allow_large_messages_) {
+            something_happened = probe_for_one_message(on_message, MPI_ANY_SOURCE, LARGE_MESSAGE_TAG);
+        }
         if (receive_mode_ == ReceiveMode::poll) {
             something_happened |= probe_for_message_probing(on_message);
         } else {
@@ -761,6 +777,8 @@ private:
     size_t reserved_receive_buffer_size_;
     std::vector<ReceiveBufferContainer> receive_buffers;
     std::vector<MPI_Request> receive_requests;
+    std::vector<int> indices;
+    std::vector<MPI_Status> statuses;
     internal::MessageCounter local_message_count = {0, 0};
     internal::MessageCounter message_count_reduce_buffer;
     internal::MessageCounter global_message_count = {std::numeric_limits<size_t>::max(),
@@ -775,6 +793,7 @@ private:
     const int LARGE_MESSAGE_TAG;
     const int SMALL_MESSAGE_TAG;
     ReceiveMode receive_mode_;
+    bool allow_large_messages_ = false;
     TerminationState termination_state = TerminationState::active;
     size_t number_of_waves = 0;
     bool use_test_any_ = false;
