@@ -190,7 +190,9 @@ public:
         global_threshold_bytes_ = threshold;
         if (!threshold == std::numeric_limits<size_t>::max()) {
             queue_.reserved_receive_buffer_size((threshold + sizeof(BufferType) - 1) / sizeof(BufferType));
-        }
+        } else {
+	  queue_.allow_large_messages();
+	}
         if (check_for_global_buffer_overflow(0)) {
             flush_all_buffers();
         }
