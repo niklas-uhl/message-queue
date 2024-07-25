@@ -538,7 +538,7 @@ public:
     bool progress_sending() {
         // check for finished sends and try starting new ones
         bool something_happenend = false;
-        if (!use_test_any_) {
+        if (true || !use_test_any_) {
             if (!use_custom_implementation_) {
                 request_pool.test_some([&](int completed_request_index) {
                     in_transit_messages[completed_request_index].emplace({comm_});
