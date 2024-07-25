@@ -766,7 +766,8 @@ public:
     }
 
     bool terminate(MessageHandler<T, MessageContainer> auto&& on_message,
-                   std::invocable<> auto&& before_next_message_counting_round_hook) {
+                   std::invocable<> auto&& before_next_message_counting_round_hook,
+                   std::invocable<> auto&& progress_hook) {
         termination_state = TerminationState::trying_termination;
         while (true) {
             before_next_message_counting_round_hook();
@@ -780,6 +781,7 @@ public:
             // we never get to poll if message counting finishes instantly
             do {
                 poll(on_message);
+                progress_hook();
                 if (termination_state == TerminationState::active) {
                     return false;
                 }
@@ -789,6 +791,14 @@ public:
                 return true;
             }
         }
+    }
+
+    bool terminate(MessageHandler<T, MessageContainer> auto&& on_message,
+                   std::invocable<> auto&& before_next_message_counting_round_hook) {
+        return terminate(
+            std::forward<decltype(on_message)>(on_message),
+            std::forward<decltype(before_next_message_counting_round_hook)>(before_next_message_counting_round_hook),
+            []() {});
     }
 
     bool terminate(MessageHandler<T, MessageContainer> auto&& on_message) {

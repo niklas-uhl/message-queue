@@ -146,10 +146,17 @@ public:
     /// (not necessarily the underlying data) is moved to the handler when
     /// called.
     bool terminate(MessageHandler<MessageType> auto&& on_message) {
+        return terminate(std::forward<decltype(on_message)>(on_message), []() {});
+    }
+
+    /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
+    /// (not necessarily the underlying data) is moved to the handler when
+    /// called.
+    bool terminate(MessageHandler<MessageType> auto&& on_message, std::invocable<> auto&& progress_hook) {
         auto before_next_message_counting_round_hook = [&] {
             flush_all_buffers();
         };
-        return queue_.terminate(split_handler(on_message), before_next_message_counting_round_hook);
+        return queue_.terminate(split_handler(on_message), before_next_message_counting_round_hook, progress_hook);
     }
 
     void reactivate() {
