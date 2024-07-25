@@ -53,9 +53,9 @@ public:
     using splitter_type = Splitter;
     using buffer_cleaner_type = BufferCleaner;
 
-    BufferedMessageQueue(MPI_Comm comm,
-                         size_t num_request_slots,
-                         ReceiveMode receive_mode,
+    BufferedMessageQueue(MPI_Comm comm = MPI_COMM_WORLD,
+                         size_t num_request_slots = 8,
+                         ReceiveMode receive_mode = ReceiveMode::persistent,
                          Merger merger = Merger{},
                          Splitter splitter = Splitter{},
                          BufferCleaner cleaner = BufferCleaner{})
