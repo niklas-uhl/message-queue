@@ -179,12 +179,18 @@ public:
     }
 
     void global_threshold(size_t threshold) {
-        global_threshold_bytes(threshold * sizeof(BufferType));
+        if (threshold == std::numeric_limits<size_t>::max()) {
+            global_threshold_bytes(std::numeric_limits<size_t>::max());
+        } else {
+            global_threshold_bytes(threshold * sizeof(BufferType));
+        }
     }
 
     void global_threshold_bytes(size_t threshold) {
         global_threshold_bytes_ = threshold;
-        queue_.reserved_receive_buffer_size((threshold + sizeof(BufferType) - 1) / sizeof(BufferType));
+        if (!threshold == std::numeric_limits<size_t>::max()) {
+            queue_.reserved_receive_buffer_size((threshold + sizeof(BufferType) - 1) / sizeof(BufferType));
+        }
         if (check_for_global_buffer_overflow(0)) {
             flush_all_buffers();
         }
@@ -226,7 +232,7 @@ public:
     MPI_Comm communicator() const {
         return queue_.communicator();
     }
-  
+
     auto& underlying() {
         return queue_;
     }
