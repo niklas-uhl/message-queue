@@ -28,7 +28,7 @@
 namespace message_queue {
 template <typename T>
 concept IndirectionScheme = requires(T scheme, MPI_Comm comm, PEID sender, PEID receiver) {
-    { T{comm} };
+    // { T{comm} };
     { scheme.next_hop(sender, receiver) } -> std::same_as<PEID>;
     { scheme.should_redirect(sender, receiver) } -> std::same_as<bool>;
 };
