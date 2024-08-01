@@ -156,7 +156,10 @@ public:
         auto before_next_message_counting_round_hook = [&] {
             flush_all_buffers();
         };
-        return queue_.terminate(split_handler(on_message), before_next_message_counting_round_hook, progress_hook);
+        in_terminate = true;
+        bool ret = queue_.terminate(split_handler(on_message), before_next_message_counting_round_hook, progress_hook);
+        in_terminate = false;
+        return ret;
     }
 
     void reactivate() {
@@ -191,8 +194,8 @@ public:
         if (threshold != std::numeric_limits<size_t>::max()) {
             queue_.reserved_receive_buffer_size((threshold + sizeof(BufferType) - 1) / sizeof(BufferType));
         } else {
-	  queue_.allow_large_messages();
-	}
+            queue_.allow_large_messages();
+        }
         if (check_for_global_buffer_overflow(0)) {
             flush_all_buffers();
         }
@@ -251,6 +254,10 @@ private:
         // we don't send if the cleanup has emptied the buffer
         if (buffer.empty()) {
             return ++buffer_it;
+        }
+        flush_buffer_calls++;
+        if (in_terminate) {
+            flush_buffer_calls_in_terminate++;
         }
         queue_.post_message(std::move(buffer), receiver);
         global_buffer_size_ -= pre_cleanup_buffer_size;
@@ -327,6 +334,11 @@ private:
     size_t global_threshold_bytes_ = std::numeric_limits<size_t>::max();
     size_t local_threshold_ = std::numeric_limits<size_t>::max();
     FlushStrategy flush_strategy_ = FlushStrategy::global;
+
+public:
+    size_t flush_buffer_calls = 0;
+    size_t flush_buffer_calls_in_terminate = 0;
+    bool in_terminate = false;
 };
 
 template <typename MessageType,
