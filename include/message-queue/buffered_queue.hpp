@@ -21,7 +21,9 @@
 
 #include <mpi.h>
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <ranges>
 #include <unordered_map>
 #include <vector>
@@ -210,7 +212,20 @@ public:
     }
 
     void local_threshold(size_t threshold) {
-        local_threshold_ = threshold;
+      if (threshold == std::numeric_limits<size_t>::max()) {
+	local_threshold_bytes(std::numeric_limits<size_t>::max());
+      } else {
+	local_threshold_bytes(threshold * sizeof(BufferType));
+      }
+    }
+
+    void local_threshold_bytes(size_t threshold) {
+        local_threshold_bytes_ = threshold;
+        if (threshold != std::numeric_limits<size_t>::max()) {
+	  queue_.reserved_receive_buffer_size((threshold + sizeof(BufferType) - 1) / sizeof(BufferType));
+        } else {
+            queue_.allow_large_messages();
+        }
         for (auto& [receiver, buffer] : buffers_) {
             if (check_for_local_buffer_overflow(buffer, 0)) {
                 flush_buffer(receiver);
@@ -218,8 +233,12 @@ public:
         }
     }
 
+    size_t local_threshold_bytes() const {
+        return local_threshold_bytes_;
+    }
+
     size_t local_threshold() const {
-        return local_threshold_;
+        return global_threshold_bytes_ / sizeof(BufferType);
     }
 
     void flush_strategy(FlushStrategy strategy) {
@@ -315,10 +334,10 @@ private:
     }
 
     bool check_for_local_buffer_overflow(BufferContainer const& buffer, std::uint64_t buffer_size_delta) const {
-        if (local_threshold_ == std::numeric_limits<size_t>::max()) {
+        if (local_threshold_bytes_ == std::numeric_limits<size_t>::max()) {
             return false;
         }
-        return buffer.size() + buffer_size_delta > local_threshold_;
+        return (buffer.size() + buffer_size_delta) * sizeof(BufferType) > local_threshold_bytes_;
     }
 
     bool check_for_buffer_overflow(BufferContainer const& buffer, std::uint64_t buffer_size_delta) const {
@@ -332,7 +351,7 @@ private:
     BufferCleaner pre_send_cleanup;
     size_t global_buffer_size_ = 0;
     size_t global_threshold_bytes_ = std::numeric_limits<size_t>::max();
-    size_t local_threshold_ = std::numeric_limits<size_t>::max();
+    size_t local_threshold_bytes_ = std::numeric_limits<size_t>::max();
     FlushStrategy flush_strategy_ = FlushStrategy::global;
 
 public:
