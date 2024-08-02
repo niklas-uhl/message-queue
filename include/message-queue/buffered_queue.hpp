@@ -130,7 +130,14 @@ public:
     }
 
     void flush_all_buffers() {
-        flush_all_buffers_impl(buffers_.end());
+        flush_all_buffers_impl(buffers_.end(), [] { return false; });
+    }
+
+    void flush_all_buffers_and_poll_until_reactivated(MessageHandler<MessageType> auto&& on_message) {
+        flush_all_buffers_impl(buffers_.end(), [&] {
+            poll(std::forward<decltype(on_message)>(on_message));
+            return termination_state() == TerminationState::active;
+        });
     }
 
     void flush_largest_buffer() {
@@ -156,7 +163,8 @@ public:
     /// called.
     bool terminate(MessageHandler<MessageType> auto&& on_message, std::invocable<> auto&& progress_hook) {
         auto before_next_message_counting_round_hook = [&] {
-            flush_all_buffers();
+            flush_all_buffers_and_poll_until_reactivated(on_message);
+            // flush_all_buffers();
         };
         in_terminate = true;
         bool ret = queue_.terminate(split_handler(on_message), before_next_message_counting_round_hook, progress_hook);
@@ -166,6 +174,10 @@ public:
 
     void reactivate() {
         queue_.reactivate();
+    }
+
+    TerminationState termination_state() const {
+        return queue_.termination_state();
     }
 
     bool progress_sending() {
@@ -212,17 +224,17 @@ public:
     }
 
     void local_threshold(size_t threshold) {
-      if (threshold == std::numeric_limits<size_t>::max()) {
-	local_threshold_bytes(std::numeric_limits<size_t>::max());
-      } else {
-	local_threshold_bytes(threshold * sizeof(BufferType));
-      }
+        if (threshold == std::numeric_limits<size_t>::max()) {
+            local_threshold_bytes(std::numeric_limits<size_t>::max());
+        } else {
+            local_threshold_bytes(threshold * sizeof(BufferType));
+        }
     }
 
     void local_threshold_bytes(size_t threshold) {
         local_threshold_bytes_ = threshold;
         if (threshold != std::numeric_limits<size_t>::max()) {
-	  queue_.reserved_receive_buffer_size((threshold + sizeof(BufferType) - 1) / sizeof(BufferType));
+            queue_.reserved_receive_buffer_size((threshold + sizeof(BufferType) - 1) / sizeof(BufferType));
         } else {
             queue_.allow_large_messages();
         }
@@ -287,10 +299,14 @@ private:
         }
     }
 
-    void flush_all_buffers_impl(BufferMap::iterator current_buffer) {
+    /// if after_flush_hook return true, this breaks the loop
+    void flush_all_buffers_impl(BufferMap::iterator current_buffer, std::predicate<> auto&& after_flush_hook) {
         auto it = buffers_.begin();
         while (it != buffers_.end()) {
             it = flush_buffer_impl(it, it != current_buffer);
+            if (after_flush_hook()) {
+                return;
+            }
         }
     }
 
@@ -316,7 +332,7 @@ private:
                 flush_buffer_impl(current_buffer, /*erase=*/false);
                 break;
             case FlushStrategy::global:
-                flush_all_buffers_impl(current_buffer);
+                flush_all_buffers_impl(current_buffer, [] { return false; });
                 break;
             case FlushStrategy::random:
                 throw std::runtime_error("Random flush strategy not implemented");

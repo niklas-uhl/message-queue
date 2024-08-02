@@ -357,6 +357,8 @@ struct MessageCounter {
 
 enum class ReceiveMode { poll, posted_receives, persistent };
 
+enum class TerminationState { active, trying_termination, terminated };
+
 template <MPIType T,
           MPIBuffer<T> MessageContainer = std::vector<T>,
           MPIBuffer<T> ReceiveBufferContainer = std::vector<T>>
@@ -704,12 +706,16 @@ public:
         message_count_reduce_buffer = {0, 0};
         global_message_count = {std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max() - 1};
         request_id_ = 0;
-        termination_state = TerminationState::active;
+        termination_state_ = TerminationState::active;
         number_of_waves = 0;
     }
 
     void reactivate() {
-        termination_state = TerminationState::active;
+        termination_state_ = TerminationState::active;
+    }
+
+    TerminationState termination_state() const {
+        return termination_state_;
     }
 
     PEID rank() const {
@@ -731,7 +737,7 @@ public:
             // store for double counting
             global_message_count = message_count_reduce_buffer;
         }
-        termination_state = TerminationState::terminated;
+        termination_state_ = TerminationState::terminated;
         return terminated;
     }
 
@@ -768,11 +774,14 @@ public:
     bool terminate(MessageHandler<T, MessageContainer> auto&& on_message,
                    std::invocable<> auto&& before_next_message_counting_round_hook,
                    std::invocable<> auto&& progress_hook) {
-        termination_state = TerminationState::trying_termination;
+        termination_state_ = TerminationState::trying_termination;
         while (true) {
             before_next_message_counting_round_hook();
-            poll_until_message_box_empty(on_message, [&] { return termination_state == TerminationState::active; });
-            if (termination_state == TerminationState::active) {
+            if (termination_state_ == TerminationState::active) {
+                return false;
+            }
+            poll_until_message_box_empty(on_message, [&] { return termination_state_ == TerminationState::active; });
+            if (termination_state_ == TerminationState::active) {
                 return false;
             }
             start_message_counting();
@@ -782,12 +791,12 @@ public:
             do {
                 poll(on_message);
                 progress_hook();
-                if (termination_state == TerminationState::active) {
+                if (termination_state_ == TerminationState::active) {
                     return false;
                 }
             } while (!message_counting_finished());
             if (check_termination_condition()) {
-                termination_state = TerminationState::terminated;
+                termination_state_ = TerminationState::terminated;
                 return true;
             }
         }
@@ -822,7 +831,6 @@ public:
     }
 
 private:
-    enum class TerminationState { active, trying_termination, terminated };
     std::deque<internal::handles::SendHandle<T, MessageContainer>> outgoing_message_box;
     internal::RequestPool request_pool;
     std::vector<internal::handles::SendHandle<T, MessageContainer>> in_transit_messages;
@@ -847,7 +855,7 @@ private:
     const int SMALL_MESSAGE_TAG;
     ReceiveMode receive_mode_;
     bool allow_large_messages_ = false;
-    TerminationState termination_state = TerminationState::active;
+    TerminationState termination_state_ = TerminationState::active;
     size_t number_of_waves = 0;
     size_t max_probe_rounds_ = std::numeric_limits<size_t>::max();
     bool use_test_any_ = false;
