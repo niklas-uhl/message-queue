@@ -8,8 +8,7 @@ include(cmake/dependencies.cmake)
 find_package(MPI REQUIRED)
 
 include(cmake/setup_assertion_level.cmake)
-find_package(kassert REQUIRED)
-find_package(kamping REQUIRED)
+FetchContent_MakeAvailable(kassert kamping)
 
 try_compile(
   MESSAGE_QUEUE_HAS_LAZY_SPLIT_VIEW

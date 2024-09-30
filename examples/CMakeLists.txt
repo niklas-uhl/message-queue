@@ -1,8 +1,11 @@
-find_package(range-v3 REQUIRED)
-find_package(CLI11 REQUIRED)
-find_package(fmt REQUIRED)
+FetchContent_MakeAvailable(range-v3 CLI11 fmt)
+
+add_library(range-v3 INTERFACE IMPORTED)
+target_include_directories(range-v3 INTERFACE ${range-v3_SOURCE_DIR}/include)
+add_library(range-v3::range-v3 ALIAS range-v3)
+
 if(MESSAGE_QUEUE_BACKTRACE)
-  find_package(bakward-mpi REQUIRED)
+  FetchContent_MakeAvailable(bakward-mpi)
 endif()
 
 add_executable(message_hopping_example message_hopping_example.cpp)
