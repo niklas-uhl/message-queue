@@ -643,7 +643,7 @@ public:
             messages_to_receive.clear();
         };
         size_t rounds = 0;
-        while (auto probe_result = internal::handles::probe(comm_)) {
+        while (auto probe_result = internal::handles::probe(comm_, MPI_ANY_SOURCE, SMALL_MESSAGE_TAG)) {
             something_happenend = true;
             auto recv_handle = probe_result->template handle<T, ReceiveBufferContainer>();
             // atomic_debug(fmt::format("probed msg from {}", recv_handle.sender));
