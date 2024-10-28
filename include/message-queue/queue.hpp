@@ -850,9 +850,9 @@ private:
     MPI_Comm comm_;
     PEID rank_;
     PEID size_;
-    const int TAG_UB;
-    const int LARGE_MESSAGE_TAG;
-    const int SMALL_MESSAGE_TAG;
+    int TAG_UB;
+    int LARGE_MESSAGE_TAG;
+    int SMALL_MESSAGE_TAG;
     ReceiveMode receive_mode_;
     bool allow_large_messages_ = false;
     TerminationState termination_state_ = TerminationState::active;
