@@ -476,7 +476,40 @@ public:
 
     MessageQueue(MessageQueue&&) = default;
     MessageQueue(MessageQueue const&) = delete;
-    MessageQueue& operator=(MessageQueue&&) = default;
+    MessageQueue& operator=(MessageQueue&& other) {
+        for (size_t i = 0; i < receive_requests.size(); i++) {
+            cancel_receive(i);
+        }
+
+        this->outgoing_message_box = std::move(other.outgoing_message_box);
+        this->request_pool = std::move(other.request_pool);
+        this->in_transit_messages = other.in_transit_messages;
+        this->messages_to_receive = std::move(other.messages_to_receive);
+        this->reserved_receive_buffer_size_ = other.reserved_receive_buffer_size_;
+        this->receive_buffers = std::move(other.receive_buffers);
+        this->receive_requests = std::move(other.receive_requests);
+        this->indices = std::move(other.indices);
+        this->statuses = std::move(other.statuses);
+        this->local_message_count = other.local_message_count;
+        this->message_count_reduce_buffer = other.message_count_reduce_buffer;
+        this->global_message_count = other.global_message_count;
+        this->termination_request = other.termination_request;
+        this->request_id_ = other.request_id_;
+        this->comm_ = other.comm_;
+        this->rank_ = other.rank_;
+        this->size_ = other.size_;
+        this->TAG_UB = other.TAG_UB;
+        this->LARGE_MESSAGE_TAG = other.LARGE_MESSAGE_TAG;
+        this->SMALL_MESSAGE_TAG = other.SMALL_MESSAGE_TAG;
+        this->receive_mode_ = other.receive_mode_;
+        this->allow_large_messages_ = other.allow_large_messages_;
+        this->termination_state_ = other.termination_state_;
+        this->number_of_waves = other.number_of_waves;
+        this->max_probe_rounds_ = other.max_probe_rounds_;
+        this->use_test_any_ = other.use_test_any_;
+        this->use_custom_implementation_ = other.use_custom_implementation_;
+        return *this;
+    }
     MessageQueue& operator=(MessageQueue const&) = delete;
 
     // MessageQueue(MPI_Comm comm = MPI_COMM_WORLD)
