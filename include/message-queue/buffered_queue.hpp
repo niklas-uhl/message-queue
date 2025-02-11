@@ -123,10 +123,17 @@ public:
         return post_message(std::ranges::views::single(message), receiver, tag);
     }
 
-    void flush_buffer(PEID receiver) {
+    /// Flush buffer for \p receiver. If the buffer is empty, or does not exist, this is a no-op.
+    /// \param receiver The rank of the receiver
+    /// \return true if the buffer had some data to flush, false otherwise
+    bool flush_buffer(PEID receiver) {
         auto it = buffers_.find(receiver);
-        KASSERT(buffers_.end() != it, "Trying to flush non-existing buffer for receiver " << receiver);
-        flush_buffer_impl(it);
+        if (it != buffers_.end()) {
+            bool buffer_was_empty = it->second.empty();
+            flush_buffer_impl(it);
+            return buffer_was_empty;
+        }
+        return false;
     }
 
     void flush_all_buffers() {
