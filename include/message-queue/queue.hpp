@@ -1,4 +1,4 @@
-// Copyright (c) 2021-2023 Tim Niklas Uhl
+// Copyright (c) 2021-2025 Tim Niklas Uhl
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of
 // this software and associated documentation files (the "Software"), to deal in
@@ -709,6 +709,9 @@ public:
         } else {
             something_happened |= probe_for_messages_persistent(on_message);
         }
+	if (something_happened) {
+	  reactivate();
+	}
         return something_happened;
     }
 
@@ -744,6 +747,9 @@ public:
     }
 
     void reactivate() {
+        if (synchronous_mode_) {
+            return;
+        }
         termination_state_ = TerminationState::active;
     }
 
@@ -804,9 +810,9 @@ public:
         return reduce_finished;
     }
 
-    bool terminate(MessageHandler<T, MessageContainer> auto&& on_message,
-                   std::invocable<> auto&& before_next_message_counting_round_hook,
-                   std::invocable<> auto&& progress_hook) {
+    [[nodiscard]] bool terminate(MessageHandler<T, MessageContainer> auto&& on_message,
+                                 std::invocable<> auto&& before_next_message_counting_round_hook,
+                                 std::invocable<> auto&& progress_hook) {
         termination_state_ = TerminationState::trying_termination;
         while (true) {
             before_next_message_counting_round_hook();
@@ -835,8 +841,8 @@ public:
         }
     }
 
-    bool terminate(MessageHandler<T, MessageContainer> auto&& on_message,
-                   std::invocable<> auto&& before_next_message_counting_round_hook) {
+    [[nodiscard]] bool terminate(MessageHandler<T, MessageContainer> auto&& on_message,
+                                 std::invocable<> auto&& before_next_message_counting_round_hook) {
         return terminate(
             std::forward<decltype(on_message)>(on_message),
             std::forward<decltype(before_next_message_counting_round_hook)>(before_next_message_counting_round_hook),
@@ -845,6 +851,12 @@ public:
 
     bool terminate(MessageHandler<T, MessageContainer> auto&& on_message) {
         return terminate(on_message, [] {});
+    }
+
+    /// if this mode is active, no incoming messages will cancel the termination process
+    /// this allows using the queue as a somewhat async sparse-all-to-all
+    void synchronous_mode(bool use_it = true) {
+        synchronous_mode_ = use_it;
     }
 
     auto max_active_requests() const {
@@ -893,6 +905,7 @@ private:
     size_t max_probe_rounds_ = std::numeric_limits<size_t>::max();
     bool use_test_any_ = false;
     bool use_custom_implementation_ = false;
+    bool synchronous_mode_ = false;
 };
 
 }  // namespace message_queue

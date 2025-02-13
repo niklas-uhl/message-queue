@@ -39,10 +39,12 @@ auto main(int argc, char* argv[]) -> int {
     {
         auto queue1 = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, 8, message_queue::ReceiveMode::poll,
                                                               printing_cleaner);
+        queue1.synchronous_mode();
         MPI_Comm other_comm;
         MPI_Comm_dup(MPI_COMM_WORLD, &other_comm);
         auto queue2 =
             message_queue::make_buffered_queue<int>(other_comm, 8, message_queue::ReceiveMode::poll, printing_cleaner);
+        queue2.synchronous_mode();
         int rank, size;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         MPI_Comm_size(MPI_COMM_WORLD, &size);
@@ -54,11 +56,11 @@ auto main(int argc, char* argv[]) -> int {
             queue1.post_message(1, val);
             queue2.post_message(2, val);
         }
-        queue2.terminate([&](message_queue::Envelope<int> auto envelope) {
+        auto _ = queue2.terminate([&](message_queue::Envelope<int> auto envelope) {
             message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", envelope.message, envelope.sender));
         });
 
-        queue1.terminate([&](message_queue::Envelope<int> auto envelope) {
+        _ = queue1.terminate([&](message_queue::Envelope<int> auto envelope) {
             message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", envelope.message, envelope.sender));
         });
     }

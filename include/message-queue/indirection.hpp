@@ -137,15 +137,15 @@ public:
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
     /// (not necessarily the underlying data) is moved to the handler when
     /// called.
-    bool terminate(MessageHandler<typename queue_type::message_type> auto&& on_message) {
+    [[nodiscard]] bool terminate(MessageHandler<typename queue_type::message_type> auto&& on_message) {
         return terminate(std::forward<decltype(on_message)>(on_message), []() {});
     }
 
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
     /// (not necessarily the underlying data) is moved to the handler when
     /// called.
-    bool terminate(MessageHandler<typename queue_type::message_type> auto&& on_message,
-                   std::invocable<> auto&& progress_hook) {
+    [[nodiscard]] bool terminate(MessageHandler<typename queue_type::message_type> auto&& on_message,
+                                 std::invocable<> auto&& progress_hook) {
         return queue_type::terminate(redirection_handler(on_message), progress_hook);
     }
 

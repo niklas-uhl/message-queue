@@ -161,14 +161,14 @@ public:
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
     /// (not necessarily the underlying data) is moved to the handler when
     /// called.
-    bool terminate(MessageHandler<MessageType> auto&& on_message) {
+    [[nodiscard]] bool terminate(MessageHandler<MessageType> auto&& on_message) {
         return terminate(std::forward<decltype(on_message)>(on_message), []() {});
     }
 
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
     /// (not necessarily the underlying data) is moved to the handler when
     /// called.
-    bool terminate(MessageHandler<MessageType> auto&& on_message, std::invocable<> auto&& progress_hook) {
+    [[nodiscard]] bool terminate(MessageHandler<MessageType> auto&& on_message, std::invocable<> auto&& progress_hook) {
         auto before_next_message_counting_round_hook = [&] {
             flush_all_buffers_and_poll_until_reactivated(on_message);
             // flush_all_buffers();
@@ -278,6 +278,12 @@ public:
 
     auto& underlying() {
         return queue_;
+    }
+
+    /// if this mode is active, no incoming messages will cancel the termination process
+    /// this allows using the queue as a somewhat async sparse-all-to-all
+    void synchronous_mode(bool use_it = true) {
+        queue_.synchronous_mode(use_it);
     }
 
 private:

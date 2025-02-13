@@ -85,6 +85,7 @@ auto main(int argc, char* argv[]) -> int {
     {
         auto queue = message_queue::make_buffered_queue<std::pair<int, int>, int>(
             MPI_COMM_WORLD, 8, message_queue::ReceiveMode::poll, merge, split, printing_cleaner);
+	queue.synchronous_mode();
         int rank, size;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         MPI_Comm_size(MPI_COMM_WORLD, &size);
@@ -122,7 +123,7 @@ auto main(int argc, char* argv[]) -> int {
                 }
             }
         };
-        queue.terminate(handler);
+        auto _  = queue.terminate(handler);
         if (rank == 0) {
             KASSERT(zero_message_counter == size);
         } else {

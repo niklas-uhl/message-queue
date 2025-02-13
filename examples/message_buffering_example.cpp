@@ -78,6 +78,7 @@ auto main(int argc, char* argv[]) -> int {
     {
         auto queue = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, 8, message_queue::ReceiveMode::poll,
                                                              printing_cleaner);
+	queue.synchronous_mode();
         int rank, size;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         MPI_Comm_size(MPI_COMM_WORLD, &size);
@@ -95,7 +96,7 @@ auto main(int argc, char* argv[]) -> int {
             int val = dist(gen);
             queue.post_message(val, val);
         }
-        queue.terminate([&](message_queue::Envelope<int> auto envelope) {
+        auto _ = queue.terminate([&](message_queue::Envelope<int> auto envelope) {
             message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", envelope.message, envelope.sender));
         });
     }

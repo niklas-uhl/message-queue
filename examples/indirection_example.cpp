@@ -56,10 +56,11 @@ auto main() -> int {
     {
         auto queue = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, 8, message_queue::ReceiveMode::poll,
                                                              merger, splitter);
+	queue.synchronous_mode();
         auto indirection =
             message_queue::IndirectionAdapter{std::move(queue), message_queue::GridIndirectionScheme{MPI_COMM_WORLD}};
         indirection.post_message(42, 0);
-        indirection.terminate([](message_queue::Envelope<int> auto envelope) {
+        auto _ = indirection.terminate([](message_queue::Envelope<int> auto envelope) {
             message_queue::atomic_debug(fmt::format("Message {} from {} arrived via {}.",
                                                     envelope.message | std::ranges::views::take(1), envelope.sender,
                                                     envelope.message | std::ranges::views::drop(1)));
