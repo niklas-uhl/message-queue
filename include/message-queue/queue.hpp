@@ -709,9 +709,9 @@ public:
         } else {
             something_happened |= probe_for_messages_persistent(on_message);
         }
-	if (something_happened) {
-	  reactivate();
-	}
+        if (something_happened) {
+            reactivate();
+        }
         return something_happened;
     }
 
