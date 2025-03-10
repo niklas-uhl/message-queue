@@ -1,4 +1,4 @@
-// Copyright (c) 2021-2023 Tim Niklas Uhl
+// Copyright (c) 2021-2025 Tim Niklas Uhl
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of
 // this software and associated documentation files (the "Software"), to deal in
@@ -46,6 +46,7 @@ template <typename MessageType,
 class BufferedMessageQueue {
 private:
     using BufferMap = std::unordered_map<PEID, BufferContainer>;
+    using BufferList = std::vector<BufferContainer>;
 
 public:
     using message_type = MessageType;
@@ -81,6 +82,22 @@ public:
     BufferedMessageQueue& operator=(BufferedMessageQueue&&) = default;
     BufferedMessageQueue& operator=(BufferedMessageQueue const&) = delete;
 
+    void reserve_send_buffers(std::size_t num_buffers) {
+        auto buffer_size = local_threshold();
+        if (buffer_size == std::numeric_limits<size_t>::max()) {
+            buffer_size = 0;
+        }
+        reserve_send_buffers(num_buffers, buffer_size);
+    }
+
+    void reserve_send_buffers(std::size_t num_buffers, std::size_t buffer_size) {
+        auto old_size = buffer_free_list_.size();
+        buffer_free_list_.resize(old_size + num_buffers);
+        for (auto& buf : std::ranges::subrange(buffer_free_list_.begin() + old_size, buffer_free_list_.end())) {
+            buf.reserve(buffer_size);
+        }
+    }
+
     /// Note: messages have to be passed as rvalues. If you want to send static
     /// data without an additional copy, wrap it in a std::ranges::ref_view.
     bool post_message(InputMessageRange<MessageType> auto&& message,
@@ -90,7 +107,13 @@ public:
                       int tag) {
         auto it = buffers_.find(receiver);
         if (it == buffers_.end()) {
-            it = buffers_.emplace(receiver, BufferContainer{}).first;
+            if (buffer_free_list_.empty()) {
+	      reserve_send_buffers(1);
+            }
+            KASSERT(!buffer_free_list_.empty());
+            auto buffer = std::move(buffer_free_list_.back());
+	    buffer_free_list_.pop_back();
+            it = buffers_.emplace(receiver, std::move(buffer)).first;
         }
         auto& buffer = it->second;
         auto envelope = MessageEnvelope{std::move(message), envelope_sender, envelope_receiver, tag};
@@ -375,6 +398,7 @@ private:
     }
     MessageQueue<BufferType, ReceiveBufferContainer> queue_;
     BufferMap buffers_;
+    BufferList buffer_free_list_;
     Merger merge;
     Splitter split;
     BufferCleaner pre_send_cleanup;

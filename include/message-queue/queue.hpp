@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <deque>
+#include <expected>
 #include <kamping/mpi_datatype.hpp>
 #include <kassert/kassert.hpp>
 #include <limits>
@@ -365,14 +366,25 @@ template <MPIType T,
 class MessageQueue {
     enum class State { posted, initiated, completed };
 
-    bool try_send_something(int hint = -1) {
+    bool try_send_something_from_message_box(int hint = -1) {
         if (outgoing_message_box.empty()) {
             return false;
         }
+        internal::handles::SendHandle<T, MessageContainer>& message_to_send = outgoing_message_box.front();
+        if (auto returned_handle = try_send_something(hint, std::move(message_to_send))) {
+            message_to_send = std::move(*returned_handle);
+            return false;
+        }
+        outgoing_message_box.pop_front();
+        return true;
+    }
+
+    auto try_send_something(int hint, internal::handles::SendHandle<T, MessageContainer>&& message_to_send)
+        -> std::optional<internal::handles::SendHandle<T, MessageContainer>> {
         if (auto result = request_pool.get_some_inactive_request(hint)) {
-            internal::handles::SendHandle<T, MessageContainer> message_to_send =
-                std::move(outgoing_message_box.front());
-            outgoing_message_box.pop_front();
+            // internal::handles::SendHandle<T, MessageContainer> message_to_send =
+            //     std::move(outgoing_message_box.front());
+
             auto [index, req_ptr] = *result;
             message_to_send.set_request(req_ptr);
             // atomic_debug(fmt::format("isend msg={}, to {}, using request {}", message_to_send.message,
@@ -380,9 +392,9 @@ class MessageQueue {
             in_transit_messages[index].swap(message_to_send);
             in_transit_messages[index].initiate_send();
             // KASSERT(*message_to_send.request_ != MPI_REQUEST_NULL);
-            return true;
+            return std::nullopt;
         }
-        return false;
+        return std::move(message_to_send);
     }
 
     static int comm_tag_ub(MPI_Comm comm) {
@@ -537,11 +549,19 @@ public:
         allow_large_messages_ = allow;
     }
 
-    void post_message(MessageContainer&& message, PEID receiver) {
+    size_t message_box_capacity() const {
+        return message_box_capacity_;
+    }
+
+    void message_box_capacity(size_t capacity) {
+        message_box_capacity_ = capacity;
+    }
+
+  auto post_message(MessageContainer&& message, PEID receiver) -> std::optional<std::size_t> {
         // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));
         // assert(receiver != rank_);
         if (message.size() == 0) {
-            return;
+	  return std::nullopt;
         }
         internal::handles::SendHandle<T, MessageContainer> handle(comm_);
         // std::cout << "message.size=" << message.size();
@@ -557,10 +577,37 @@ public:
         handle.set_message(std::move(message));
         handle.set_receiver(receiver);
         handle.set_request_id(this->request_id_);
-        outgoing_message_box.emplace_back(std::move(handle));
-        this->request_id_++;
-        try_send_something();
-        local_message_count.send++;
+	if (outgoing_message_box.empty()) {
+	  // we can try to send directly
+	  auto returned_handle = try_send_something(-1, std::move(handle));
+	  if (returned_handle.has_value()) {
+	    // no slots available
+	  } else {
+	    // succeeded
+	    this->request_id_++;
+	    local_message_count.send++;
+	  }
+        } else {
+	  // try appending to the message box
+	  if (outgoing_message_box.size() >= message_box_capacity_) {
+	    // the message box is full
+
+	  }
+	  outgoing_message_box.emplace_back(std::move(handle));
+	  this->request_id_++;
+	  try_send_something_from_message_box();
+	  local_message_count.send++;
+	}
+        if (outgoing_message_box.size() >= message_box_capacity_) {
+	  // the message box is full
+ 	  if (!try_send_something_from_message_box()) {
+	  }
+	  try_send_something(-1, std::move(handle));
+        } else {
+
+	}
+
+
     }
 
     void post_message(T message, PEID receiver) {
@@ -578,13 +625,13 @@ public:
                 request_pool.test_some([&](int completed_request_index) {
                     in_transit_messages[completed_request_index].emplace({comm_});
                     something_happenend = true;
-                    try_send_something(completed_request_index);
+                    try_send_something_from_message_box(completed_request_index);
                 });
             } else {
                 request_pool.my_test_some([&](int completed_request_index) {
                     in_transit_messages[completed_request_index].emplace({comm_});
                     something_happenend = true;
-                    try_send_something(completed_request_index);
+                    try_send_something_from_message_box(completed_request_index);
                 });
             }
         } else {
@@ -596,19 +643,19 @@ public:
                         in_transit_messages[completed_request_index].emplace({comm_});
                         something_happenend = true;
                         progress = true;
-                        try_send_something(completed_request_index);
+                        try_send_something_from_message_box(completed_request_index);
                     });
                 } else {
                     request_pool.my_test_any([&](int completed_request_index) {
                         in_transit_messages[completed_request_index].emplace({comm_});
                         something_happenend = true;
                         progress = true;
-                        try_send_something(completed_request_index);
+                        try_send_something_from_message_box(completed_request_index);
                     });
                 }
             }
         }
-        while (try_send_something()) {
+        while (try_send_something_from_message_box()) {
         }
         return something_happenend;
     }
@@ -877,6 +924,7 @@ public:
 
 private:
     std::deque<internal::handles::SendHandle<T, MessageContainer>> outgoing_message_box;
+    std::size_t message_box_capacity_ = std::numeric_limits<size_t>::max();
     internal::RequestPool request_pool;
     std::vector<internal::handles::SendHandle<T, MessageContainer>> in_transit_messages;
     std::vector<internal::handles::ReceiveHandle<T, ReceiveBufferContainer>> messages_to_receive;
