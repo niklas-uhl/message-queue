@@ -45,6 +45,13 @@ public:
         return receiver != rank();
     }
 
+    [[nodiscard]] auto num_groups() const -> std::size_t {
+        return grid_size_;
+    }
+    [[nodiscard]] auto group_size() const -> std::size_t {
+        return grid_size_;
+    }
+
 private:
     int rank() const {
         int my_rank;
@@ -92,33 +99,40 @@ static_assert(IndirectionScheme<GridIndirectionScheme>);
 
 template <IndirectionScheme Indirector, typename BufferedQueueType>
 class IndirectionAdapter : public BufferedQueueType {
-public:
+private:
     using queue_type = BufferedQueueType;
-    IndirectionAdapter(BufferedQueueType queue, Indirector indirector)
-        : BufferedQueueType(std::move(queue)), indirection_(std::move(indirector)) {}
+    using MessageType = typename queue_type::message_type;
 
-    bool post_message(InputMessageRange<typename queue_type::message_type> auto&& message,
+public:
+    IndirectionAdapter(BufferedQueueType queue, Indirector indirector)
+    : BufferedQueueType(std::move(queue)), indirection_(std::move(indirector)) {}
+
+    auto &indirection_scheme() { return indirection_; }
+
+    auto const &indirection_scheme() const { return indirection_; }
+
+    bool post_message(InputMessageRange<MessageType> auto&& message,
                       PEID receiver,
                       PEID envelope_sender,
                       PEID envelope_receiver,
                       int tag,
                       bool direct_send = false) {
-        PEID next_hop;
-        if (direct_send) {
-            next_hop = receiver;
-        } else {
+        PEID next_hop = receiver;
+        if (!direct_send) {
             next_hop = indirection_.next_hop(envelope_sender, envelope_receiver);
         }
-        return queue_type::post_message(std::move(message), next_hop, envelope_sender, envelope_receiver, tag);
+        return queue_type::post_message(std::forward<decltype(message)>(message), next_hop, envelope_sender,
+                                        envelope_receiver, tag);
     }
 
     /// Note: messages have to be passed as rvalues. If you want to send static
     /// data without an additional copy, wrap it in a std::ranges::ref_view.
-    bool post_message(InputMessageRange<typename queue_type::message_type> auto&& message,
+    bool post_message(InputMessageRange<MessageType> auto&& message,
                       PEID receiver,
                       int tag = 0,
                       bool direct_send = false) {
-        return post_message(std::move(message), receiver, this->rank(), receiver, tag, direct_send);
+        return post_message(std::forward<decltype(message)>(message), receiver, this->rank(), receiver, tag,
+                            direct_send);
     }
 
     /// Note: messages have to be passed as rvalues. If you want to send static
@@ -127,11 +141,50 @@ public:
         return post_message(std::ranges::views::single(message), receiver, tag, direct_send);
     }
 
+    bool post_message_blocking(InputMessageRange<MessageType> auto&& message,
+                               PEID receiver,
+                               PEID envelope_sender,
+                               PEID envelope_receiver,
+                               int tag,
+                               MessageHandler<MessageType> auto&& on_message,
+                               bool direct_send = false) {
+        PEID next_hop = receiver;
+        if (!direct_send) {
+            next_hop = indirection_.next_hop(envelope_sender, envelope_receiver);
+        }
+        return queue_type::post_message_blocking(std::forward<decltype(message)>(message), next_hop, envelope_sender,
+                                                 envelope_receiver, tag,
+						 redirection_handler(std::forward<decltype(on_message)>(on_message)));
+    }
+
+    /// Note: messages have to be passed as rvalues. If you want to send static
+    /// data without an additional copy, wrap it in a std::ranges::ref_view.
+    bool post_message_blocking(InputMessageRange<MessageType> auto&& message,
+                               PEID receiver,
+                               MessageHandler<MessageType> auto&& on_message,
+                               int tag = 0,
+                               bool direct_send = false) {
+        return post_message_blocking(std::forward<decltype(message)>(message), receiver, this->rank(), receiver, tag,
+                                     std::forward<decltype(on_message)>(on_message), direct_send);
+    }
+
+    bool post_message_blocking(MessageType message,
+                               PEID receiver,
+                               MessageHandler<MessageType> auto&& on_message,
+                               int tag = 0,
+                               bool direct_send = false) {
+        return post_message_blocking(std::ranges::views::single(message), receiver,
+                                     std::forward<decltype(on_message)>(on_message), tag, direct_send);
+    }
+
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
     /// (not necessarily the underlying data) is moved to the handler when
     /// called.
-    bool poll(MessageHandler<typename queue_type::message_type> auto&& on_message) {
-        return queue_type::poll(redirection_handler(on_message));
+    auto
+    poll(MessageHandler<typename queue_type::message_type> auto &&on_message)
+        -> std::optional<std::pair<bool, bool>> {
+      return queue_type::poll(
+          redirection_handler(std::forward<decltype(on_message)>(on_message)));
     }
 
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
@@ -146,22 +199,24 @@ public:
     /// called.
     [[nodiscard]] bool terminate(MessageHandler<typename queue_type::message_type> auto&& on_message,
                                  std::invocable<> auto&& progress_hook) {
-        return queue_type::terminate(redirection_handler(on_message), progress_hook);
+      return queue_type::terminate(redirection_handler(std::forward<decltype(on_message)>(on_message)), progress_hook);
     }
 
 private:
-    auto redirection_handler(MessageHandler<typename queue_type::message_type> auto&& on_message) {
-        return [&](Envelope<typename queue_type::message_type> auto envelope) {
-            if (indirection_.should_redirect(envelope.sender, envelope.receiver)) {
-                post_message(std::move(envelope.message), envelope.receiver, envelope.sender, envelope.receiver,
-                             envelope.tag);
-            } else {
-                KASSERT(envelope.receiver == this->rank());
-                on_message(std::move(envelope));
-            }
-        };
-    }
-    Indirector indirection_;
+  auto redirection_handler(
+      MessageHandler<typename queue_type::message_type> auto &&on_message) {
+    return [&](Envelope<typename queue_type::message_type> auto envelope) {
+      if (indirection_.should_redirect(envelope.sender, envelope.receiver)) {
+        post_message_blocking(std::move(envelope.message), envelope.receiver,
+                              envelope.sender, envelope.receiver, envelope.tag,
+                              std::forward<decltype(on_message)>(on_message));
+      } else {
+        KASSERT(envelope.receiver == this->rank());
+        on_message(std::move(envelope));
+      }
+    };
+  }
+  Indirector indirection_;
 };
 
 }  // namespace message_queue

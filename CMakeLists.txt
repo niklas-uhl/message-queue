@@ -14,7 +14,7 @@ try_compile(
   MESSAGE_QUEUE_HAS_LAZY_SPLIT_VIEW
   ${CMAKE_CURRENT_BINARY_DIR}
   SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/compile_check.cpp
-  CXX_STANDARD 20
+  CXX_STANDARD 23
 )
 
 set(message_queue_source_files
@@ -29,10 +29,10 @@ set(message_queue_source_files
 
 add_library(message-queue ${message_queue_source_files})
 target_include_directories(message-queue PUBLIC include)
-target_link_libraries(message-queue PUBLIC MPI::MPI_CXX kassert::kassert)
+target_link_libraries(message-queue PUBLIC MPI::MPI_CXX kassert::kassert fmt::fmt spdlog::spdlog)
 target_link_libraries(message-queue PUBLIC kamping::kamping)
   
-target_compile_features(message-queue PUBLIC cxx_std_20)
+target_compile_features(message-queue PUBLIC cxx_std_23)
 if (NOT MESSAGE_QUEUE_HAS_LAZY_SPLIT_VIEW)
   message(STATUS "Your compiler has std::views::split implementation which is lazy, see the caveats in the README")
   target_compile_definitions(message-queue PUBLIC MESSAGE_QUEUE_SPLIT_VIEW_IS_LAZY)

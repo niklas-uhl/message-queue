@@ -21,6 +21,7 @@
 
 #include <mpi.h>
 #include <algorithm>
+#include <concepts>
 #include <cstddef>
 #include <deque>
 #include <kamping/mpi_datatype.hpp>
@@ -33,6 +34,8 @@
 #include <vector>
 #include "message-queue/concepts.hpp"
 #include "message-queue/debug_print.hpp"
+
+#include <spdlog/spdlog.h>
 
 namespace message_queue {
 
@@ -47,7 +50,7 @@ public:
 
     template <typename CompletionFunction>
     void test_some(CompletionFunction&& on_complete = [](int) {}) {
-        int outcount;
+        int outcount = 0;
         max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
         MPI_Testsome(active_range.second - active_range.first,  // count
                      requests.data() + active_range.first,      // requests
@@ -69,8 +72,8 @@ public:
 
     template <typename CompletionFunction>
     void test_any(CompletionFunction&& on_complete = [](int) {}) {
-        int flag;
-        int index;
+        int flag = 0;
+        int index = 0;
         max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
         MPI_Testany(active_range.second - active_range.first,  // count
                     requests.data() + active_range.first,      // requests
@@ -94,7 +97,7 @@ public:
             if (requests[i] == MPI_REQUEST_NULL) {
                 continue;
             }
-            int flag;
+            int flag = 0;
             MPI_Test(&requests[i], &flag, MPI_STATUS_IGNORE);
             if (flag) {
                 remove_from_active_range(i);
@@ -112,7 +115,7 @@ public:
             if (requests[i] == MPI_REQUEST_NULL) {
                 continue;
             }
-            int flag;
+            int flag = 0;
             MPI_Test(&requests[i], &flag, MPI_STATUS_IGNORE);
             if (flag) {
                 remove_from_active_range(i);
@@ -151,12 +154,8 @@ private:
 
     void add_to_active_range(int index) {
         active_requests_++;
-        if (index < active_range.first) {
-            active_range.first = index;
-        }
-        if (index + 1 > active_range.second) {
-            active_range.second = index + 1;
-        }
+        active_range.first = std::min(index, active_range.first);
+        active_range.second = std::max(index + 1, active_range.second);
     }
 
     void remove_from_active_range(int index) {
@@ -180,7 +179,7 @@ private:
 
 namespace handles {
 template <MPIType S, MPIBuffer MessageContainer = std::vector<S>>
-    requires std::same_as<S, typename MessageContainer::value_type>
+    requires std::same_as<S, typename std::ranges::range_value_t<MessageContainer>>
 class MessageHandle {
 public:
     // MessageHandle() {};
@@ -210,9 +209,17 @@ public:
         return tag_;
     }
 
+    std::optional<MessageContainer> const& message() const {
+      return message_;
+    }
+
+    MessageContainer extract_message() {
+        return std::move(*this->message_);
+    }
+
 protected:
     size_t message_size_ = 0;
-    MessageContainer message_;
+    std::optional<MessageContainer> message_;
     MPI_Request* request_ = nullptr;
     size_t request_id_;
     int tag_ = MPI_ANY_TAG;
@@ -227,8 +234,8 @@ public:
         // std::cout << "tag=" << this->tag_ << " size=" << this->message_.size() << "\n";
         // atomic_debug(fmt::format("Isend m={}, receiver={}, tag={}, comm={}", this->message_, receiver_, this->tag_,
         // format(this->comm_)));
-        int err = MPI_Isend(this->message_.data(), this->message_.size(), kamping::mpi_datatype<S>(), receiver_,
-                            this->tag_, this->comm_, this->request_);
+        int err = MPI_Isend(std::data(*this->message_), std::size(*this->message_), kamping::mpi_datatype<S>(),
+                            receiver_, this->tag_, this->comm_, this->request_);
         check_mpi_error(err, __FILE__, __LINE__);
     }
 
@@ -248,6 +255,10 @@ public:
         this->request_id_ = request_id;
     }
 
+    [[nodiscard]] auto get_request_id() const -> std::size_t {
+        return this->request_id_;
+    }
+
     PEID receiver() const {
         return receiver_;
     }
@@ -259,7 +270,7 @@ public:
         std::swap(this->request_id_, other.request_id_);
         std::swap(this->tag_, other.tag_);
         std::swap(this->message_size_, other.message_size_);
-        this->message_.swap(other.message_);
+        std::swap(this->message_, other.message_);
     }
     void emplace(SendHandle&& other) {
         this->swap(other);
@@ -293,19 +304,16 @@ public:
     }
 
     void receive() {
-        this->message_.resize(this->message_size_);
+        this->message_->resize(this->message_size_);
         // atomic_debug(fmt::format("Mrecv msg={}", format(matched_message_)));
-        MPI_Mrecv(this->message_.data(), this->message_.size(), kamping::mpi_datatype<S>(), &this->matched_message_,
-                  MPI_STATUS_IGNORE);
+        MPI_Mrecv(std::data(*this->message_), std::size(*this->message_), kamping::mpi_datatype<S>(),
+                  &this->matched_message_, MPI_STATUS_IGNORE);
     }
 
     PEID sender() const {
         return sender_;
     }
 
-    MessageContainer extract_message() {
-        return std::move(this->message_);
-    }
     friend struct ProbeResult;
 };
 
@@ -365,24 +373,40 @@ template <MPIType T,
 class MessageQueue {
     enum class State { posted, initiated, completed };
 
-    bool try_send_something(int hint = -1) {
+    std::size_t buffer_owned_by_queue_ = 0;
+
+    bool try_send_something_from_message_box(int hint = -1) {
         if (outgoing_message_box.empty()) {
             return false;
         }
+        internal::handles::SendHandle<T, MessageContainer>& message_to_send = outgoing_message_box.front();
+        if (auto returned_handle = try_send_something(hint, std::move(message_to_send))) {
+            message_to_send = std::move(*returned_handle);
+            return false;
+        }
+        outgoing_message_box.pop_front();
+        return true;
+    }
+
+    auto try_send_something(int hint, internal::handles::SendHandle<T, MessageContainer>&& message_to_send)
+        -> std::optional<internal::handles::SendHandle<T, MessageContainer>> {
         if (auto result = request_pool.get_some_inactive_request(hint)) {
-            internal::handles::SendHandle<T, MessageContainer> message_to_send =
-                std::move(outgoing_message_box.front());
-            outgoing_message_box.pop_front();
+            // internal::handles::SendHandle<T, MessageContainer> message_to_send =
+            //     std::move(outgoing_message_box.front());
+
             auto [index, req_ptr] = *result;
             message_to_send.set_request(req_ptr);
             // atomic_debug(fmt::format("isend msg={}, to {}, using request {}", message_to_send.message,
             // message_to_send.receiver, index));
+            KASSERT(!in_transit_messages[index].message().has_value());
+            buffer_owned_by_queue_++;
+	    // spdlog::debug("buffers_owned_by_queue={}", buffer_owned_by_queue_);
             in_transit_messages[index].swap(message_to_send);
             in_transit_messages[index].initiate_send();
             // KASSERT(*message_to_send.request_ != MPI_REQUEST_NULL);
-            return true;
+            return std::nullopt;
         }
-        return false;
+        return std::move(message_to_send);
     }
 
     static int comm_tag_ub(MPI_Comm comm) {
@@ -537,11 +561,44 @@ public:
         allow_large_messages_ = allow;
     }
 
-    void post_message(MessageContainer&& message, PEID receiver) {
+    [[nodiscard]] size_t message_box_capacity() const {
+        return message_box_capacity_;
+    }
+
+    void message_box_capacity(size_t capacity) {
+        message_box_capacity_ = capacity;
+    }
+
+    [[nodiscard]] std::size_t empty_send_slots() const {
+        return request_pool.inactive_requests();
+    }
+
+    [[nodiscard]] std::size_t used_send_slots() const {
+      return request_pool.active_requests();
+    }
+
+    [[nodiscard]] std::size_t remaining_message_box_capacity() const {
+        if (message_box_capacity_ == std::numeric_limits<std::size_t>::max()) {
+            std::numeric_limits<std::size_t>::max();
+        }
+        return message_box_capacity_ - outgoing_message_box.size();
+    }
+
+    [[nodiscard]] std::size_t total_remaining_capacity() const {
+        if (remaining_message_box_capacity() == std::numeric_limits<std::size_t>::max()) {
+            return std::numeric_limits<std::size_t>::max();
+        }
+        return empty_send_slots() + remaining_message_box_capacity();
+    }
+
+    /// Post a message to the message queue
+    /// Posting a message may fail if the message box is full and no send slots are available.
+    /// @return an optional containing the request id if the message was successfully posted, otherwise nullopt
+    auto post_message(MessageContainer&& message, PEID receiver) -> std::optional<std::size_t> {
         // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));
         // assert(receiver != rank_);
         if (message.size() == 0) {
-            return;
+            return std::nullopt;
         }
         internal::handles::SendHandle<T, MessageContainer> handle(comm_);
         // std::cout << "message.size=" << message.size();
@@ -557,58 +614,113 @@ public:
         handle.set_message(std::move(message));
         handle.set_receiver(receiver);
         handle.set_request_id(this->request_id_);
+
+        if (outgoing_message_box.empty() && empty_send_slots() > 0) {
+            // we can try to send directly
+            auto returned_handle = try_send_something(-1, std::move(handle));
+            if (returned_handle.has_value()) {
+                // no slots available
+                return std::nullopt;
+            }  // succeeded
+            auto receipt = std::optional{this->request_id_};
+            this->request_id_++;
+            local_message_count.send++;
+            return receipt;
+        }
+        // try appending to the message box
+        try_send_something_from_message_box();  // ensure that we don't "waste" an empty slot
+        if (outgoing_message_box.size() >= message_box_capacity_) {
+            // the message box is full
+            return std::nullopt;
+        }
         outgoing_message_box.emplace_back(std::move(handle));
+        auto receipt = std::optional{this->request_id_};
         this->request_id_++;
-        try_send_something();
+        try_send_something_from_message_box();
         local_message_count.send++;
+        return receipt;
     }
 
-    void post_message(T message, PEID receiver) {
+    auto post_message(T message, PEID receiver) -> std::optional<std::size_t> {
         // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));
         // assert(receiver != rank_);
         MessageContainer message_vector{std::move(message)};
-        post_message(std::move(message_vector), receiver);
+        return post_message(std::move(message_vector), receiver);
     }
 
-    bool progress_sending() {
+    bool progress_sending(SendFinishedCallback<MessageContainer> auto on_finished_sending) {
+        constexpr bool move_back_message = std::invocable<decltype(on_finished_sending), std::size_t, MessageContainer>;
         // check for finished sends and try starting new ones
         bool something_happenend = false;
-        if (true || !use_test_any_) {
+        if (request_pool.active_requests() == 0) {
+	    return true;
+	}
+        if (!use_test_any_) {
             if (!use_custom_implementation_) {
                 request_pool.test_some([&](int completed_request_index) {
+                    std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
+                    auto message = in_transit_messages[completed_request_index].extract_message();
+                    buffer_owned_by_queue_--;
+		    // spdlog::debug("buffers_owned_by_queue={}", buffer_owned_by_queue_);
                     in_transit_messages[completed_request_index].emplace({comm_});
                     something_happenend = true;
-                    try_send_something(completed_request_index);
+                    if constexpr (move_back_message) {
+                        on_finished_sending(request_id, std::move(message));
+                    } else {
+                        on_finished_sending(request_id);
+                    }
+                    try_send_something_from_message_box(completed_request_index);
                 });
             } else {
                 request_pool.my_test_some([&](int completed_request_index) {
+                    std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
+                    auto message = in_transit_messages[completed_request_index].extract_message();
                     in_transit_messages[completed_request_index].emplace({comm_});
                     something_happenend = true;
-                    try_send_something(completed_request_index);
+                    if constexpr (move_back_message) {
+                        on_finished_sending(request_id, std::move(message));
+                    } else {
+                        on_finished_sending(request_id);
+                    }
+                    try_send_something_from_message_box(completed_request_index);
                 });
             }
         } else {
             bool progress = true;
-            while (progress) {
+            // while (progress) {
                 progress = false;
                 if (!use_custom_implementation_) {
                     request_pool.test_any([&](int completed_request_index) {
+                        std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
+                        auto message = in_transit_messages[completed_request_index].extract_message();
                         in_transit_messages[completed_request_index].emplace({comm_});
                         something_happenend = true;
                         progress = true;
-                        try_send_something(completed_request_index);
+                        if constexpr (move_back_message) {
+                            on_finished_sending(request_id, std::move(message));
+                        } else {
+                            on_finished_sending(request_id);
+                        }
+                        try_send_something_from_message_box(completed_request_index);
                     });
                 } else {
                     request_pool.my_test_any([&](int completed_request_index) {
+                        std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
+                        auto message = in_transit_messages[completed_request_index].extract_message();
                         in_transit_messages[completed_request_index].emplace({comm_});
                         something_happenend = true;
                         progress = true;
-                        try_send_something(completed_request_index);
+                        if constexpr (move_back_message) {
+                            on_finished_sending(request_id, std::move(message));
+                        } else {
+                            on_finished_sending(request_id);
+                        }
+                        try_send_something_from_message_box(completed_request_index);
                     });
                 }
-            }
+            // }
         }
-        while (try_send_something()) {
+        while (try_send_something_from_message_box()) {
         }
         return something_happenend;
     }
@@ -626,21 +738,22 @@ public:
                 MPI_Testsome(static_cast<int>(receive_requests.size()), receive_requests.data(), &outcount,
                              indices.data(), statuses.data());
             } else {
-                int flag;
-                MPI_Testany(static_cast<int>(receive_requests.size()), receive_requests.data(), &indices[0], &flag,
-                            &statuses[0]);
+                int flag = 0;
+                int err = MPI_Testany(static_cast<int>(receive_requests.size()), receive_requests.data(), &indices[0], &flag,
+				      &statuses[0]);
                 if (flag) {
-                    if (indices[0] == MPI_UNDEFINED) {
-                        throw "This should not happen";
-                    }
-                    outcount = 1;
-                } else {
+                  if (indices[0] == MPI_UNDEFINED) {
                     outcount = 0;
+                  } else {
+                    outcount = 1;
+		  }
+                } else {
+                  outcount = 0;
                 }
             }
             // std::cout << "outcount=" << outcount << "\n";
             if (outcount == MPI_UNDEFINED) {
-                throw "This should not happen";
+              throw std::runtime_error("This should not happen, because we always have pending requests");
             }
             for (int i = 0; i < outcount; i++) {
                 something_happenend = true;
@@ -720,7 +833,7 @@ public:
                                int tag = MPI_ANY_TAG) {
         if (auto probe_result = internal::handles::probe(comm_, source, tag)) {
             auto recv_handle = probe_result->template handle<T, ReceiveBufferContainer>();
-            MPI_Request recv_req;
+            MPI_Request recv_req = MPI_REQUEST_NULL;
             recv_handle.set_request(&recv_req);
             recv_handle.receive();
             local_message_count.receive++;
@@ -730,17 +843,41 @@ public:
         return false;
     }
 
-    bool poll(MessageHandler<T, MessageContainer> auto&& on_message) {
-        bool something_happenend = false;
-        something_happenend |= progress_sending();
-        something_happenend |= probe_for_messages(on_message);
-        return something_happenend;
+    auto poll(MessageHandler<T, MessageContainer> auto &&on_message)
+        -> std::optional<std::pair<bool, bool>> {
+      return poll(on_message, [](std::size_t) {});
+    }
+
+    std::chrono::time_point<std::chrono::high_resolution_clock> last_poll_time = std::chrono::high_resolution_clock::now();
+
+    auto
+    poll(MessageHandler<T, MessageContainer> auto &&on_message,
+         SendFinishedCallback<MessageContainer> auto &&on_finished_sending,
+         std::chrono::duration<double> frequency = std::chrono::milliseconds(0))
+        -> std::optional<std::pair<bool, bool>> {
+      auto now = std::chrono::high_resolution_clock::now();
+      if (frequency.count() > 0) {
+        if (now - last_poll_time < frequency) {
+          return std::nullopt;
+        }
+        last_poll_time = now;
+      }
+      // bool something_happenend = false;
+      bool send_finished_something = progress_sending(
+          std::forward<decltype(on_finished_sending)>(on_finished_sending));
+      bool probe_finished_somehting =
+          probe_for_messages(std::forward<decltype(on_message)>(on_message));
+      if (send_finished_something || probe_finished_somehting) {
+        return std::pair{send_finished_something, probe_finished_somehting};
+      }
+      return std::nullopt;
     }
 
     void reset() {
-        local_message_count = {0, 0};
-        message_count_reduce_buffer = {0, 0};
-        global_message_count = {std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max() - 1};
+        local_message_count = {.send = 0, .receive = 0};
+        message_count_reduce_buffer = {.send = 0, .receive = 0};
+        global_message_count = {.send = std::numeric_limits<size_t>::max(),
+                                .receive = std::numeric_limits<size_t>::max() - 1};
         request_id_ = 0;
         termination_state_ = TerminationState::active;
         number_of_waves = 0;
@@ -753,19 +890,19 @@ public:
         termination_state_ = TerminationState::active;
     }
 
-    TerminationState termination_state() const {
+    [[nodiscard]] TerminationState termination_state() const {
         return termination_state_;
     }
 
-    PEID rank() const {
+    [[nodiscard]] PEID rank() const {
         return rank_;
     }
 
-    PEID size() const {
+    [[nodiscard]] PEID size() const {
         return size_;
     }
 
-    MPI_Comm communicator() const {
+    [[nodiscard]] MPI_Comm communicator() const {
         return comm_;
     }
 
@@ -782,9 +919,11 @@ public:
 
     void poll_until_message_box_empty(
         MessageHandler<T, MessageContainer> auto&& on_message,
+        SendFinishedCallback<MessageContainer> auto&& on_finished_sending,
         std::predicate<> auto&& should_stop_polling = [] { return false; }) {
         while (!outgoing_message_box.empty()) {
-            poll(on_message);
+            poll(std::forward<decltype(on_message)>(on_message),
+                 std::forward<decltype(on_finished_sending)>(on_finished_sending));
             if (should_stop_polling()) {
                 return;
             }
@@ -800,10 +939,19 @@ public:
         }
     }
 
-    bool message_counting_finished() {
+    std::chrono::time_point<std::chrono::high_resolution_clock> last_termination_check_time = std::chrono::high_resolution_clock::now();
+
+    bool message_counting_finished(std::chrono::duration<double> frequency = std::chrono::milliseconds(0)) {
         if (termination_request == MPI_REQUEST_NULL) {
             return true;
         }
+	if (frequency.count() > 0) {
+	    auto now = std::chrono::high_resolution_clock::now();
+	    if (now - last_termination_check_time < frequency) {
+		return false;
+	    }
+	    last_termination_check_time = now;
+	}
         int reduce_finished = false;
         int err = MPI_Test(&termination_request, &reduce_finished, MPI_STATUS_IGNORE);
         check_mpi_error(err, __FILE__, __LINE__);
@@ -811,6 +959,7 @@ public:
     }
 
     [[nodiscard]] bool terminate(MessageHandler<T, MessageContainer> auto&& on_message,
+                                 SendFinishedCallback<MessageContainer> auto&& on_finished_sending,
                                  std::invocable<> auto&& before_next_message_counting_round_hook,
                                  std::invocable<> auto&& progress_hook) {
         termination_state_ = TerminationState::trying_termination;
@@ -819,7 +968,9 @@ public:
             if (termination_state_ == TerminationState::active) {
                 return false;
             }
-            poll_until_message_box_empty(on_message, [&] { return termination_state_ == TerminationState::active; });
+            poll_until_message_box_empty(std::forward<decltype(on_message)>(on_message),
+                                         std::forward<decltype(on_finished_sending)>(on_finished_sending),
+                                         [&] { return termination_state_ == TerminationState::active; });
             if (termination_state_ == TerminationState::active) {
                 return false;
             }
@@ -828,11 +979,12 @@ public:
             // if the the message box is empty upon calling this function
             // we never get to poll if message counting finishes instantly
             do {
-                poll(on_message);
-                progress_hook();
-                if (termination_state_ == TerminationState::active) {
-                    return false;
-                }
+	      poll(std::forward<decltype(on_message)>(on_message), std::forward<decltype(on_finished_sending)>(on_finished_sending));
+	      progress_hook();
+	      if (termination_state_ == TerminationState::active) {
+		spdlog::warn("Terminate cancelled");
+		return false;
+	      }
             } while (!message_counting_finished());
             if (check_termination_condition()) {
                 termination_state_ = TerminationState::terminated;
@@ -877,6 +1029,7 @@ public:
 
 private:
     std::deque<internal::handles::SendHandle<T, MessageContainer>> outgoing_message_box;
+    std::size_t message_box_capacity_ = std::numeric_limits<size_t>::max();
     internal::RequestPool request_pool;
     std::vector<internal::handles::SendHandle<T, MessageContainer>> in_transit_messages;
     std::vector<internal::handles::ReceiveHandle<T, ReceiveBufferContainer>> messages_to_receive;
