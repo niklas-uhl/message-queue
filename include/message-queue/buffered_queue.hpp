@@ -63,6 +63,7 @@ public:
                          Splitter splitter = Splitter{},
                          BufferCleaner cleaner = BufferCleaner{})
         : queue_(comm, num_request_slots, 32 * 1024 / sizeof(BufferType), receive_mode),
+	  in_transit_buffers_(num_request_slots),
           merge(std::move(merger)),
           split(std::move(splitter)),
           pre_send_cleanup(std::move(cleaner)) {}
@@ -206,7 +207,7 @@ public:
         queue_.reactivate();
     }
 
-    TerminationState termination_state() const {
+    [[nodiscard]] TerminationState termination_state() const {
         return queue_.termination_state();
     }
 
@@ -326,7 +327,12 @@ private:
         if (in_terminate) {
             flush_buffer_calls_in_terminate++;
         }
-        queue_.post_message(std::move(buffer), receiver);
+        auto it = std::ranges::find_if(in_transit_buffers_, [](auto& slot) { return slot.has_value(); });
+        (*it)->second.swap(buffer);
+	auto buf = std::ranges::ref_view{(*it)->second};
+        auto receipt = queue_.post_message(std::move(buf), receiver);
+        KASSERT(receipt.has_value());
+	(*it)->first = *receipt;
         global_buffer_size_ -= pre_cleanup_buffer_size;
         if (erase) {
             return buffers_.erase(buffer_it);
@@ -396,9 +402,10 @@ private:
         return check_for_global_buffer_overflow(buffer_size_delta) ||
                check_for_local_buffer_overflow(buffer, buffer_size_delta);
     }
-    MessageQueue<BufferType, ReceiveBufferContainer> queue_;
+    MessageQueue<BufferType, std::ranges::ref_view<BufferContainer>, ReceiveBufferContainer> queue_;
     BufferMap buffers_;
     BufferList buffer_free_list_;
+    std::vector<std::optional<std::pair<std::size_t, BufferContainer>>> in_transit_buffers_;
     Merger merge;
     Splitter split;
     BufferCleaner pre_send_cleanup;
