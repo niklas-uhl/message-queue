@@ -88,6 +88,9 @@ concept MessageHandler = MessageRange<MessageContainerType, MessageDataType> &&
                              { on_message(std::move(envelope)) };
                          };
 
+template<typename Func, typename MessageContainerType>
+concept SendFinishedCallback = std::invocable<Func, std::size_t> || std::invocable<Func, std::size_t, MessageContainerType>;
+
 namespace aggregation {
 template <typename MergerType, typename MessageType, typename BufferContainer>
 concept Merger = requires(MergerType merge,

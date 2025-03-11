@@ -21,6 +21,7 @@
 
 #include <mpi.h>
 #include <algorithm>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -63,7 +64,8 @@ public:
                          Splitter splitter = Splitter{},
                          BufferCleaner cleaner = BufferCleaner{})
         : queue_(comm, num_request_slots, 32 * 1024 / sizeof(BufferType), receive_mode),
-	  in_transit_buffers_(num_request_slots),
+          in_transit_buffers_(num_request_slots),
+	  available_in_transit_slots_(in_transit_buffers_.size()),
           merge(std::move(merger)),
           split(std::move(splitter)),
           pre_send_cleanup(std::move(cleaner)) {}
@@ -101,24 +103,26 @@ public:
 
     /// Note: messages have to be passed as rvalues. If you want to send static
     /// data without an additional copy, wrap it in a std::ranges::ref_view.
-    bool post_message(InputMessageRange<MessageType> auto&& message,
-                      PEID receiver,
-                      PEID envelope_sender,
-                      PEID envelope_receiver,
-                      int tag) {
+    bool post_message_impl(InputMessageRange<MessageType> auto&& message,
+                           PEID receiver,
+                           PEID envelope_sender,
+                           PEID envelope_receiver,
+                           int tag,
+                           std::invocable<typename BufferMap::iterator> auto&& handle_overflow) {
         auto it = buffers_.find(receiver);
         if (it == buffers_.end()) {
             if (buffer_free_list_.empty()) {
-	      reserve_send_buffers(1);
+                reserve_send_buffers(1);
             }
             KASSERT(!buffer_free_list_.empty());
             auto buffer = std::move(buffer_free_list_.back());
-	    buffer_free_list_.pop_back();
+            buffer_free_list_.pop_back();
             it = buffers_.emplace(receiver, std::move(buffer)).first;
         }
         auto& buffer = it->second;
-        auto envelope = MessageEnvelope{std::move(message), envelope_sender, envelope_receiver, tag};
-        size_t estimated_new_buffer_size;
+        auto envelope =
+            MessageEnvelope{std::forward<decltype(message)>(message), envelope_sender, envelope_receiver, tag};
+        size_t estimated_new_buffer_size = 0;
         if constexpr (aggregation::EstimatingMerger<Merger, MessageType, BufferContainer>) {
             estimated_new_buffer_size = merge.estimate_new_buffer_size(buffer, receiver, queue_.rank(), envelope);
         } else {
@@ -127,20 +131,74 @@ public:
         auto old_buffer_size = buffer.size();
         bool overflow = false;
         if (check_for_buffer_overflow(buffer, estimated_new_buffer_size - old_buffer_size)) {
-            resolve_overflow(it);
+            handle_overflow(it);
+            // while (true) {
+            //     bool success = resolve_overflow(it);
+            //     if (success) {
+            // 	  break;
+            //     }
+            // 	poll(std::forward<decltype(on_message)>(on_message));
+            // }
             overflow = true;
         }
-        PEID rank;
+        PEID rank = 0;
         merge(buffer, receiver, queue_.rank(), std::move(envelope));
         auto new_buffer_size = buffer.size();
         global_buffer_size_ += new_buffer_size - old_buffer_size;
         return overflow;
     }
 
+    bool post_message_blocking(InputMessageRange<MessageType> auto&& message,
+                               PEID receiver,
+                               PEID envelope_sender,
+                               PEID envelope_receiver,
+                               int tag,
+                               MessageHandler<MessageType> auto&& on_message) {
+        return post_message_impl(std::forward<decltype(message)>(message), receiver, envelope_sender, envelope_receiver,
+                                 tag, [&](auto it) {
+                                     while (true) {
+                                         bool success = resolve_overflow(it);
+                                         if (success) {
+                                             break;
+                                         }
+                                         poll(std::forward<decltype(on_message)>(on_message));
+                                     }
+                                 });
+    }
+
+    /// Note: messages have to be passed as rvalues. If you want to send static
+    /// data without an additional copy, wrap it in a std::ranges::ref_view.
+    bool post_message_blocking(InputMessageRange<MessageType> auto&& message,
+                               PEID receiver,
+                               MessageHandler<MessageType> auto&& on_message,
+                               int tag = 0) {
+        return post_message_blocking(std::forward<decltype(message)>(message), receiver, rank(), receiver, tag,
+                                     std::forward<decltype(on_message)>(on_message));
+    }
+
+    bool post_message_blocking(MessageType message,
+                               PEID receiver,
+                               MessageHandler<MessageType> auto&& on_message,
+                               int tag = 0) {
+        return post_message_blocking(std::ranges::views::single(message), receiver,
+                                     std::forward<decltype(on_message)>(on_message), tag);
+    }
+
+    /// Note: messages have to be passed as rvalues. If you want to send static
+    /// data without an additional copy, wrap it in a std::ranges::ref_view.
+    bool post_message(InputMessageRange<MessageType> auto&& message,
+                      PEID receiver,
+                      PEID envelope_sender,
+                      PEID envelope_receiver,
+                      int tag) {
+        return post_message_impl(std::forward<decltype(message)>(message), receiver, envelope_sender, envelope_receiver,
+                                 tag, [&](auto it) { resolve_overflow(it); });
+    }
+
     /// Note: messages have to be passed as rvalues. If you want to send static
     /// data without an additional copy, wrap it in a std::ranges::ref_view.
     bool post_message(InputMessageRange<MessageType> auto&& message, PEID receiver, int tag = 0) {
-        return post_message(std::move(message), receiver, rank(), receiver, tag);
+        return post_message(std::forward<decltype(message)>(message), receiver, rank(), receiver, tag);
     }
 
     bool post_message(MessageType message, PEID receiver, int tag = 0) {
@@ -154,7 +212,10 @@ public:
         auto it = buffers_.find(receiver);
         if (it != buffers_.end()) {
             bool buffer_was_empty = it->second.empty();
-            flush_buffer_impl(it);
+            auto new_it = flush_buffer_impl(it);
+            // if (new_it == it) {
+	    //   return false;
+            // }
             return buffer_was_empty;
         }
         return false;
@@ -168,7 +229,7 @@ public:
         flush_all_buffers_impl(buffers_.end(), [&] {
             poll(std::forward<decltype(on_message)>(on_message));
             return termination_state() == TerminationState::active;
-        });
+        }, false);
     }
 
     void flush_largest_buffer() {
@@ -179,7 +240,22 @@ public:
     /// (not necessarily the underlying data) is moved to the handler when
     /// called.
     bool poll(MessageHandler<MessageType> auto&& on_message) {
-        return queue_.poll(split_handler(on_message));
+      return queue_.poll(split_handler(on_message), [&](std::size_t receipt, BufferContainer buffer) {
+            // find slot associated with receipt and clean it up.
+            // auto it = std::ranges::find_if(in_transit_buffers_,
+            //                                [&](std::optional<std::pair<std::size_t, BufferContainer>>& elem) {
+            //                                    if (!elem.has_value()) {
+            //                                        return false;
+            //                                    }
+            //                                    return elem->first == receipt;
+            //                                });
+            // KASSERT(it != in_transit_buffers_.end());
+            // auto buf = std::move(*it).value();
+            // available_in_transit_slots_++;
+            // KASSERT(!it->has_value());
+	    buffer.second.resize(0); // this does not reduce the capacity
+	    buffer_free_list_.emplace_back(std::move(buffer));
+        });
     }
 
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
@@ -311,6 +387,7 @@ public:
     }
 
 private:
+    /// @return an iterator to the next buffer, or the input iterator if flushing failed
     auto flush_buffer_impl(BufferMap::iterator buffer_it, bool erase = true) {
         KASSERT(buffer_it != buffers_.end(), "Trying to flush non-existing buffer.");
         auto& [receiver, buffer] = *buffer_it;
@@ -327,37 +404,54 @@ private:
         if (in_terminate) {
             flush_buffer_calls_in_terminate++;
         }
-        auto it = std::ranges::find_if(in_transit_buffers_, [](auto& slot) { return slot.has_value(); });
-        (*it)->second.swap(buffer);
-	auto buf = std::ranges::ref_view{(*it)->second};
-        auto receipt = queue_.post_message(std::move(buf), receiver);
+        // auto it = std::ranges::find_if(in_transit_buffers_, [](auto& slot) { return !slot.has_value(); });
+        // if (it == in_transit_buffers_.end()) {
+	//   return buffer_it;
+        // }
+        // (*it)->second.swap(buffer);
+	// available_in_transit_slots_--;
+        // auto buf = std::ranges::ref_view{(*it)->second};
+        auto receipt = queue_.post_message(std::move((*it)->second), receiver);
+	// posting the message should never fail, because if we have an available slot, then the underlying queue also has an available slot.
         KASSERT(receipt.has_value());
 	(*it)->first = *receipt;
         global_buffer_size_ -= pre_cleanup_buffer_size;
         if (erase) {
             return buffers_.erase(buffer_it);
-        } else {
-            return ++buffer_it;
         }
+        return ++buffer_it;
+       
     }
 
     /// if after_flush_hook return true, this breaks the loop
-    void flush_all_buffers_impl(BufferMap::iterator current_buffer, std::predicate<> auto&& after_flush_hook) {
+  bool flush_all_buffers_impl(BufferMap::iterator current_buffer, std::predicate<> auto&& after_flush_hook, bool break_when_flush_fails = true) {
         auto it = buffers_.begin();
+	bool flushed_something = false;
         while (it != buffers_.end()) {
-            it = flush_buffer_impl(it, it != current_buffer);
+            auto new_it = flush_buffer_impl(it, it != current_buffer);
+            if (new_it != it) {
+                flushed_something = true;
+		it = new_it;
+            } else {
+	      if (break_when_flush_fails) {
+                  return flushed_something;
+	      }
+            }
             if (after_flush_hook()) {
-                return;
+                return flushed_something;
             }
         }
+	return flushed_something;
     }
 
-    void flush_largest_buffer_impl(BufferMap::iterator current_buffer) {
+    [[nodiscard]] bool flush_largest_buffer_impl(BufferMap::iterator current_buffer) {
         auto largest_buffer = std::max_element(buffers_.begin(), buffers_.end(),
                                                [](auto& a, auto& b) { return a.second.size() < b.second.size(); });
         if (largest_buffer != buffers_.end()) {
-            flush_buffer_impl(largest_buffer, largest_buffer != current_buffer);
+            auto it = flush_buffer_impl(largest_buffer, largest_buffer != current_buffer);
+	    return it != largest_buffer;
         }
+	return true;
     }
 
     auto split_handler(MessageHandler<MessageType> auto&& on_message) {
@@ -368,20 +462,25 @@ private:
         };
     }
 
-    void resolve_overflow(BufferMap::iterator current_buffer) {
+    bool resolve_overflow(BufferMap::iterator current_buffer) {
         switch (flush_strategy_) {
-            case FlushStrategy::local:
-                flush_buffer_impl(current_buffer, /*erase=*/false);
-                break;
-            case FlushStrategy::global:
-                flush_all_buffers_impl(current_buffer, [] { return false; });
-                break;
-            case FlushStrategy::random:
+            case FlushStrategy::local: {
+                auto ret = flush_buffer_impl(current_buffer, /*erase=*/false);
+                return ret != current_buffer;
+            }
+            case FlushStrategy::global: {
+                return flush_all_buffers_impl(current_buffer, [] { return false; });
+            }
+            case FlushStrategy::random: {
                 throw std::runtime_error("Random flush strategy not implemented");
-            case FlushStrategy::largest:
-                flush_largest_buffer_impl(current_buffer);
-                break;
+		return false;
+            }
+            case FlushStrategy::largest: {
+                return flush_largest_buffer_impl(current_buffer);
+            }
         }
+	// unreachable
+	return false;
     }
 
     bool check_for_global_buffer_overflow(std::uint64_t buffer_size_delta) const {
@@ -402,10 +501,11 @@ private:
         return check_for_global_buffer_overflow(buffer_size_delta) ||
                check_for_local_buffer_overflow(buffer, buffer_size_delta);
     }
-    MessageQueue<BufferType, std::ranges::ref_view<BufferContainer>, ReceiveBufferContainer> queue_;
+    MessageQueue<BufferType, BufferContainer, ReceiveBufferContainer> queue_;
     BufferMap buffers_;
     BufferList buffer_free_list_;
     std::vector<std::optional<std::pair<std::size_t, BufferContainer>>> in_transit_buffers_;
+    std::size_t available_in_transit_slots_;
     Merger merge;
     Splitter split;
     BufferCleaner pre_send_cleanup;
