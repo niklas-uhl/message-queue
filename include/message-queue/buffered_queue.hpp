@@ -108,7 +108,7 @@ public:
                            PEID envelope_sender,
                            PEID envelope_receiver,
                            int tag,
-                           std::invocable<typename BufferMap::iterator> auto&& handle_overflow) {
+                           OverflowHandler<BufferMap> auto&& handle_overflow) {
         auto it = buffers_.find(receiver);
         if (it == buffers_.end()) {
             if (buffer_free_list_.empty()) {
@@ -131,7 +131,10 @@ public:
         auto old_buffer_size = buffer.size();
         bool overflow = false;
         if (check_for_buffer_overflow(buffer, estimated_new_buffer_size - old_buffer_size)) {
-            handle_overflow(it);
+            bool success = handle_overflow(it);
+            if (!success) {
+	      throw std::runtime_error("Failed to resolve overflow, it seems like the underlying queue has no buffer space left.");
+            }
             // while (true) {
             //     bool success = resolve_overflow(it);
             //     if (success) {
@@ -163,6 +166,7 @@ public:
                                          }
                                          poll(std::forward<decltype(on_message)>(on_message));
                                      }
+				     return true;
                                  });
     }
 
@@ -186,17 +190,23 @@ public:
 
     /// Note: messages have to be passed as rvalues. If you want to send static
     /// data without an additional copy, wrap it in a std::ranges::ref_view.
+    ///
+    /// if the message box capacity of the underlying queue is bounded, than this may fail and throw an exception
     bool post_message(InputMessageRange<MessageType> auto&& message,
                       PEID receiver,
                       PEID envelope_sender,
                       PEID envelope_receiver,
                       int tag) {
         return post_message_impl(std::forward<decltype(message)>(message), receiver, envelope_sender, envelope_receiver,
-                                 tag, [&](auto it) { resolve_overflow(it); });
+                                 tag, [&](auto it) {
+                                     return resolve_overflow(it);
+				 });
     }
 
     /// Note: messages have to be passed as rvalues. If you want to send static
-    /// data without an additional copy, wrap it in a std::ranges::ref_view.
+    /// data without an additional copy, wrap it in a std::ranges::ref_view
+    //// 
+    /// if the message box capacity of the underlying queue is bounded, than this may fail and throw an exception
     bool post_message(InputMessageRange<MessageType> auto&& message, PEID receiver, int tag = 0) {
         return post_message(std::forward<decltype(message)>(message), receiver, rank(), receiver, tag);
     }
@@ -253,7 +263,7 @@ public:
             // auto buf = std::move(*it).value();
             // available_in_transit_slots_++;
             // KASSERT(!it->has_value());
-	    buffer.second.resize(0); // this does not reduce the capacity
+	    buffer.resize(0); // this does not reduce the capacity
 	    buffer_free_list_.emplace_back(std::move(buffer));
         });
     }
@@ -322,11 +332,14 @@ public:
         }
     }
 
-    size_t global_threshold() const {
+    [[nodiscard]] size_t global_threshold() const {
+        if (global_threshold_bytes_ == std::numeric_limits<std::size_t>::max()) {
+            return std::numeric_limits<std::size_t>::max();
+        }
         return global_threshold_bytes_ / sizeof(BufferType);
     }
 
-    size_t global_threshold_bytes() const {
+    [[nodiscard]] size_t global_threshold_bytes() const {
         return global_threshold_bytes_;
     }
 
@@ -352,12 +365,15 @@ public:
         }
     }
 
-    size_t local_threshold_bytes() const {
+    [[nodiscard]] size_t local_threshold_bytes() const {
         return local_threshold_bytes_;
     }
 
-    size_t local_threshold() const {
-        return global_threshold_bytes_ / sizeof(BufferType);
+    [[nodiscard]] size_t local_threshold() const {
+         if (local_threshold_bytes_ == std::numeric_limits<std::size_t>::max()) {
+            return std::numeric_limits<std::size_t>::max();
+        }
+        return local_threshold_bytes_ / sizeof(BufferType);
     }
 
     void flush_strategy(FlushStrategy strategy) {
@@ -388,7 +404,7 @@ public:
 
 private:
     /// @return an iterator to the next buffer, or the input iterator if flushing failed
-    auto flush_buffer_impl(BufferMap::iterator buffer_it, bool erase = true) {
+  auto flush_buffer_impl(BufferMap::iterator buffer_it, bool erase = true) -> BufferMap::iterator {
         KASSERT(buffer_it != buffers_.end(), "Trying to flush non-existing buffer.");
         auto& [receiver, buffer] = *buffer_it;
         if (buffer.empty()) {
@@ -406,15 +422,17 @@ private:
         }
         // auto it = std::ranges::find_if(in_transit_buffers_, [](auto& slot) { return !slot.has_value(); });
         // if (it == in_transit_buffers_.end()) {
-	//   return buffer_it;
+        //   return buffer_it;
         // }
         // (*it)->second.swap(buffer);
-	// available_in_transit_slots_--;
+        // available_in_transit_slots_--;
         // auto buf = std::ranges::ref_view{(*it)->second};
-        auto receipt = queue_.post_message(std::move((*it)->second), receiver);
-	// posting the message should never fail, because if we have an available slot, then the underlying queue also has an available slot.
-        KASSERT(receipt.has_value());
-	(*it)->first = *receipt;
+        if (queue_.total_remaining_capacity() == 0) {
+	  return buffer_it;
+        }
+        auto receipt = queue_.post_message(
+            std::move(buffer_it->second),
+            receiver);  // posting the message should never fail, because we check for remaining capacity
         global_buffer_size_ -= pre_cleanup_buffer_size;
         if (erase) {
             return buffers_.erase(buffer_it);
@@ -462,6 +480,7 @@ private:
         };
     }
 
+    /// @return returns false iff resolve failed
     bool resolve_overflow(BufferMap::iterator current_buffer) {
         switch (flush_strategy_) {
             case FlushStrategy::local: {

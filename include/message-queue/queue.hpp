@@ -563,6 +563,19 @@ public:
         message_box_capacity_ = capacity;
     }
 
+    [[nodiscard]] std::size_t empty_send_slots() const {
+      return request_pool.inactive_requests();
+    }
+
+    [[nodiscard]] std::size_t remaining_message_box_capacity() const {
+      return message_box_capacity_ - outgoing_message_box.size();
+    }
+
+    [[nodiscard]] std::size_t total_remaining_capacity() const {
+      return empty_send_slots() + remaining_message_box_capacity();
+    }
+    
+
     /// Post a message to the message queue
     /// Posting a message may fail if the message box is full and no send slots are available.
     /// @return an optional containing the request id if the message was successfully posted, otherwise nullopt
@@ -601,6 +614,7 @@ public:
             }
         } else {
             // try appending to the message box
+ 	    try_send_something_from_message_box(); // ensure that we don't "waste" an empty slot
             if (outgoing_message_box.size() >= message_box_capacity_) {
                 // the message box is full
                 return std::nullopt;

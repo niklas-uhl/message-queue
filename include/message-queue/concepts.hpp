@@ -88,8 +88,14 @@ concept MessageHandler = MessageRange<MessageContainerType, MessageDataType> &&
                              { on_message(std::move(envelope)) };
                          };
 
-template<typename Func, typename MessageContainerType>
-concept SendFinishedCallback = std::invocable<Func, std::size_t> || std::invocable<Func, std::size_t, MessageContainerType>;
+template <typename Func, typename MessageContainerType>
+concept SendFinishedCallback =
+    std::invocable<Func, std::size_t> || std::invocable<Func, std::size_t, MessageContainerType>;
+
+template <typename Fn, typename BufferMapType>
+concept OverflowHandler = requires(Fn handle_overflow, typename BufferMapType::iterator it) {
+    { handle_overflow(it) } -> std::same_as<bool>;
+};
 
 namespace aggregation {
 template <typename MergerType, typename MessageType, typename BufferContainer>
