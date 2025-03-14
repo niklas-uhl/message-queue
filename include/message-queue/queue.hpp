@@ -181,7 +181,7 @@ private:
 
 namespace handles {
 template <MPIType S, MPIBuffer MessageContainer = std::vector<S>>
-requires std::same_as<S, typename std::ranges::range_value_t<MessageContainer>>
+    requires std::same_as<S, typename std::ranges::range_value_t<MessageContainer>>
 class MessageHandle {
 public:
     // MessageHandle() {};
@@ -232,8 +232,8 @@ public:
         // std::cout << "tag=" << this->tag_ << " size=" << this->message_.size() << "\n";
         // atomic_debug(fmt::format("Isend m={}, receiver={}, tag={}, comm={}", this->message_, receiver_, this->tag_,
         // format(this->comm_)));
-        int err = MPI_Isend(std::data(*this->message_), std::size(*this->message_), kamping::mpi_datatype<S>(), receiver_,
-                            this->tag_, this->comm_, this->request_);
+        int err = MPI_Isend(std::data(*this->message_), std::size(*this->message_), kamping::mpi_datatype<S>(),
+                            receiver_, this->tag_, this->comm_, this->request_);
         check_mpi_error(err, __FILE__, __LINE__);
     }
 
@@ -268,7 +268,7 @@ public:
         std::swap(this->request_id_, other.request_id_);
         std::swap(this->tag_, other.tag_);
         std::swap(this->message_size_, other.message_size_);
-	std::swap(this->message_, other.message_);
+        std::swap(this->message_, other.message_);
     }
     void emplace(SendHandle&& other) {
         this->swap(other);
@@ -304,15 +304,14 @@ public:
     void receive() {
         this->message_->resize(this->message_size_);
         // atomic_debug(fmt::format("Mrecv msg={}", format(matched_message_)));
-        MPI_Mrecv(std::data(*this->message_), std::size(*this->message_), kamping::mpi_datatype<S>(), &this->matched_message_,
-                  MPI_STATUS_IGNORE);
+        MPI_Mrecv(std::data(*this->message_), std::size(*this->message_), kamping::mpi_datatype<S>(),
+                  &this->matched_message_, MPI_STATUS_IGNORE);
     }
 
     PEID sender() const {
         return sender_;
     }
 
-    
     friend struct ProbeResult;
 };
 
@@ -564,7 +563,7 @@ public:
     }
 
     [[nodiscard]] std::size_t empty_send_slots() const {
-      return request_pool.inactive_requests();
+        return request_pool.inactive_requests();
     }
 
     [[nodiscard]] std::size_t remaining_message_box_capacity() const {
@@ -604,7 +603,7 @@ public:
         handle.set_message(std::move(message));
         handle.set_receiver(receiver);
         handle.set_request_id(this->request_id_);
-	
+
         if (outgoing_message_box.empty() && empty_send_slots() > 0) {
             // we can try to send directly
             auto returned_handle = try_send_something(-1, std::move(handle));
@@ -637,7 +636,6 @@ public:
         MessageContainer message_vector{std::move(message)};
         return post_message(std::move(message_vector), receiver);
     }
-  
 
     bool progress_sending(SendFinishedCallback<MessageContainer> auto on_finished_sending) {
         constexpr bool move_back_message = std::invocable<decltype(on_finished_sending), std::size_t, MessageContainer>;
@@ -650,24 +648,24 @@ public:
                     auto message = in_transit_messages[completed_request_index].extract_message();
                     in_transit_messages[completed_request_index].emplace({comm_});
                     something_happenend = true;
-		    if constexpr(move_back_message) {
-		      on_finished_sending(request_id, std::move(message));
+                    if constexpr (move_back_message) {
+                        on_finished_sending(request_id, std::move(message));
                     } else {
-		      on_finished_sending(request_id);                        
-                    }                       
+                        on_finished_sending(request_id);
+                    }
                     try_send_something_from_message_box(completed_request_index);
                 });
             } else {
                 request_pool.my_test_some([&](int completed_request_index) {
                     std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
-                    auto message = in_transit_messages[completed_request_index].extract_message();                    
+                    auto message = in_transit_messages[completed_request_index].extract_message();
                     in_transit_messages[completed_request_index].emplace({comm_});
                     something_happenend = true;
-		    if constexpr(move_back_message) {
-		      on_finished_sending(request_id, std::move(message));
+                    if constexpr (move_back_message) {
+                        on_finished_sending(request_id, std::move(message));
                     } else {
-		      on_finished_sending(request_id);                        
-                    }                                           
+                        on_finished_sending(request_id);
+                    }
                     try_send_something_from_message_box(completed_request_index);
                 });
             }
@@ -678,29 +676,29 @@ public:
                 if (!use_custom_implementation_) {
                     request_pool.test_any([&](int completed_request_index) {
                         std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
-			auto message = in_transit_messages[completed_request_index].extract_message();                        
+                        auto message = in_transit_messages[completed_request_index].extract_message();
                         in_transit_messages[completed_request_index].emplace({comm_});
                         something_happenend = true;
                         progress = true;
-			if constexpr(move_back_message) {
-			  on_finished_sending(request_id, std::move(message));
-			} else {
-			  on_finished_sending(request_id);                        
-			}                       
+                        if constexpr (move_back_message) {
+                            on_finished_sending(request_id, std::move(message));
+                        } else {
+                            on_finished_sending(request_id);
+                        }
                         try_send_something_from_message_box(completed_request_index);
                     });
                 } else {
                     request_pool.my_test_any([&](int completed_request_index) {
                         std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
-			auto message = in_transit_messages[completed_request_index].extract_message();                        
+                        auto message = in_transit_messages[completed_request_index].extract_message();
                         in_transit_messages[completed_request_index].emplace({comm_});
                         something_happenend = true;
                         progress = true;
-		    if constexpr(move_back_message) {
-		      on_finished_sending(request_id, std::move(message));
-                    } else {
-		      on_finished_sending(request_id);                        
-                    }                                               
+                        if constexpr (move_back_message) {
+                            on_finished_sending(request_id, std::move(message));
+                        } else {
+                            on_finished_sending(request_id);
+                        }
                         try_send_something_from_message_box(completed_request_index);
                     });
                 }
@@ -829,21 +827,22 @@ public:
     }
 
     bool poll(MessageHandler<T, MessageContainer> auto&& on_message) {
-      return poll(on_message, [](std::size_t){});
+        return poll(on_message, [](std::size_t) {});
     }
 
-    bool poll(MessageHandler<T, MessageContainer> auto&& on_message, SendFinishedCallback<MessageContainer> auto on_finished_sending) { 
+    bool poll(MessageHandler<T, MessageContainer> auto&& on_message,
+              SendFinishedCallback<MessageContainer> auto on_finished_sending) {
         bool something_happenend = false;
         something_happenend |= progress_sending(on_finished_sending);
         something_happenend |= probe_for_messages(on_message);
         return something_happenend;
     }
 
-
     void reset() {
-        local_message_count = {.send=0, .receive=0};
-        message_count_reduce_buffer = {.send=0, .receive=0};
-        global_message_count = {.send=std::numeric_limits<size_t>::max(), .receive=std::numeric_limits<size_t>::max() - 1};
+        local_message_count = {.send = 0, .receive = 0};
+        message_count_reduce_buffer = {.send = 0, .receive = 0};
+        global_message_count = {.send = std::numeric_limits<size_t>::max(),
+                                .receive = std::numeric_limits<size_t>::max() - 1};
         request_id_ = 0;
         termination_state_ = TerminationState::active;
         number_of_waves = 0;

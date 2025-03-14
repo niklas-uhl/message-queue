@@ -1,8 +1,8 @@
-// Copyright (c) 2021-2023 Tim Niklas Uhl
+// Copyright (c) 2021-2025 Tim Niklas Uhl
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of
 // this software and associated documentation files (the "Software"), to deal in
-// the Software without restriction, including without limitation the rights to
+// the Software without restriction, including without limitation the rights too
 // use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
 // the Software, and to permit persons to whom the Software is furnished to do so,
 // subject to the following conditions:
@@ -93,8 +93,11 @@ concept SendFinishedCallback =
     std::invocable<Func, std::size_t> || std::invocable<Func, std::size_t, MessageContainerType>;
 
 template <typename Fn, typename BufferMapType>
-concept OverflowHandler = requires(Fn handle_overflow, typename BufferMapType::iterator it) {
-    { handle_overflow(it) } -> std::same_as<bool>;
+concept OverflowHandler = requires(Fn handle_overflow, typename BufferMapType::iterator it) { handle_overflow(it); };
+
+template <typename Fn, typename BufferType>
+concept BufferProvider = requires(Fn get_new_buffer) {
+    { get_new_buffer() } -> std::same_as<BufferType>;
 };
 
 namespace aggregation {

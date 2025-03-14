@@ -65,7 +65,7 @@ public:
                          BufferCleaner cleaner = BufferCleaner{})
         : queue_(comm, num_request_slots, 32 * 1024 / sizeof(BufferType), receive_mode),
           in_transit_buffers_(num_request_slots),
-	  available_in_transit_slots_(in_transit_buffers_.size()),
+          available_in_transit_slots_(in_transit_buffers_.size()),
           merge(std::move(merger)),
           split(std::move(splitter)),
           pre_send_cleanup(std::move(cleaner)) {}
@@ -85,6 +85,14 @@ public:
     BufferedMessageQueue& operator=(BufferedMessageQueue&&) = default;
     BufferedMessageQueue& operator=(BufferedMessageQueue const&) = delete;
 
+    [[nodiscard]] auto num_send_buffers() const -> std::size_t {
+        return num_send_buffers_;
+    }
+
+    void max_num_send_buffers(std::size_t num_buffers) {
+        max_num_send_buffers_ = num_buffers;
+    }
+
     void reserve_send_buffers(std::size_t num_buffers) {
         auto buffer_size = local_threshold();
         if (buffer_size == std::numeric_limits<size_t>::max()) {
@@ -94,12 +102,30 @@ public:
     }
 
     void reserve_send_buffers(std::size_t num_buffers, std::size_t buffer_size) {
+        if (num_send_buffers() + num_buffers > max_num_send_buffers_) {
+            throw std::runtime_error("Exceeded maximum number of send buffers.");
+        }
         auto old_size = buffer_free_list_.size();
         buffer_free_list_.resize(old_size + num_buffers);
         for (auto& buf : std::ranges::subrange(buffer_free_list_.begin() + old_size, buffer_free_list_.end())) {
+            num_send_buffers_++;
             buf.reserve(buffer_size);
         }
     }
+
+    auto get_some_free_buffer() -> std::optional<BufferContainer> {
+        if (buffer_free_list_.empty()) {
+            if (num_send_buffers_ < max_num_send_buffers_) {
+                reserve_send_buffers(1);
+            } else {
+                return std::nullopt;
+            }
+        }
+        KASSERT(!buffer_free_list_.empty());
+        auto buffer = std::move(buffer_free_list_.back());
+        buffer_free_list_.pop_back();
+        return buffer;
+    };
 
     /// Note: messages have to be passed as rvalues. If you want to send static
     /// data without an additional copy, wrap it in a std::ranges::ref_view.
@@ -108,17 +134,13 @@ public:
                            PEID envelope_sender,
                            PEID envelope_receiver,
                            int tag,
-                           OverflowHandler<BufferMap> auto&& handle_overflow) {
+                           OverflowHandler<BufferMap> auto&& handle_overflow,
+                           BufferProvider<BufferContainer> auto&& get_new_buffer) {
         auto it = buffers_.find(receiver);
         if (it == buffers_.end()) {
-            if (buffer_free_list_.empty()) {
-                reserve_send_buffers(1);
-            }
-            KASSERT(!buffer_free_list_.empty());
-            auto buffer = std::move(buffer_free_list_.back());
-            buffer_free_list_.pop_back();
-            it = buffers_.emplace(receiver, std::move(buffer)).first;
+            it = buffers_.emplace(receiver, get_new_buffer()).first;
         }
+
         auto& buffer = it->second;
         auto envelope =
             MessageEnvelope{std::forward<decltype(message)>(message), envelope_sender, envelope_receiver, tag};
@@ -131,21 +153,18 @@ public:
         auto old_buffer_size = buffer.size();
         bool overflow = false;
         if (check_for_buffer_overflow(buffer, estimated_new_buffer_size - old_buffer_size)) {
-            bool success = handle_overflow(it);
-            if (!success) {
-	      throw std::runtime_error("Failed to resolve overflow, it seems like the underlying queue has no buffer space left.");
-            }
-            // while (true) {
-            //     bool success = resolve_overflow(it);
-            //     if (success) {
-            // 	  break;
-            //     }
-            // 	poll(std::forward<decltype(on_message)>(on_message));
-            // }
             overflow = true;
+            handle_overflow(it);
+            KASSERT(buffer.empty());
+            buffer = get_new_buffer();
         }
         PEID rank = 0;
+        auto old_buffer_capacity = buffer.capacity();
         merge(buffer, receiver, queue_.rank(), std::move(envelope));
+        auto new_buffer_capacity = buffer.capacity();
+        // if (old_buffer_capacity != new_buffer_capacity) {
+        //     spdlog::debug("Merge changed buffer capacity from {} to {}", old_buffer_capacity, new_buffer_capacity);
+        // }
         auto new_buffer_size = buffer.size();
         global_buffer_size_ += new_buffer_size - old_buffer_size;
         return overflow;
@@ -157,17 +176,27 @@ public:
                                PEID envelope_receiver,
                                int tag,
                                MessageHandler<MessageType> auto&& on_message) {
-        return post_message_impl(std::forward<decltype(message)>(message), receiver, envelope_sender, envelope_receiver,
-                                 tag, [&](auto it) {
-                                     while (true) {
-                                         bool success = resolve_overflow(it);
-                                         if (success) {
-                                             break;
-                                         }
-                                         poll(std::forward<decltype(on_message)>(on_message));
-                                     }
-				     return true;
-                                 });
+        return post_message_impl(
+            std::forward<decltype(message)>(message), receiver, envelope_sender, envelope_receiver, tag,
+            [&](auto it) {
+                while (true) {
+                    bool success = resolve_overflow(it);
+                    if (success) {
+                        break;
+                    }
+                    poll(std::forward<decltype(on_message)>(on_message));
+                }
+            },
+            [&] {
+                while (true) {
+                    auto buf = get_some_free_buffer();
+                    if (buf.has_value()) {
+                        return std::move(*buf);
+                    }
+                    // spdlog::debug("Polling");
+                    poll(std::forward<decltype(on_message)>(on_message));
+                }
+            });
     }
 
     /// Note: messages have to be passed as rvalues. If you want to send static
@@ -197,15 +226,27 @@ public:
                       PEID envelope_sender,
                       PEID envelope_receiver,
                       int tag) {
-        return post_message_impl(std::forward<decltype(message)>(message), receiver, envelope_sender, envelope_receiver,
-                                 tag, [&](auto it) {
-                                     return resolve_overflow(it);
-				 });
+        return post_message_impl(
+            std::forward<decltype(message)>(message), receiver, envelope_sender, envelope_receiver, tag,
+            [&](auto it) {
+                bool success = resolve_overflow(it);
+                if (!success) {
+                    throw std::runtime_error(
+                        "Failed to resolve overflow, because sending to the underlying queue failed.");
+                }
+            },
+            [&] {
+                auto buf = get_some_free_buffer();
+                if (!buf.has_value()) {
+                    throw std::runtime_error("Failed to resolve overflow, because no free buffer was available.");
+                }
+                return std::move(*buf);
+            });
     }
 
     /// Note: messages have to be passed as rvalues. If you want to send static
     /// data without an additional copy, wrap it in a std::ranges::ref_view
-    //// 
+    ////
     /// if the message box capacity of the underlying queue is bounded, than this may fail and throw an exception
     bool post_message(InputMessageRange<MessageType> auto&& message, PEID receiver, int tag = 0) {
         return post_message(std::forward<decltype(message)>(message), receiver, rank(), receiver, tag);
@@ -224,7 +265,7 @@ public:
             bool buffer_was_empty = it->second.empty();
             auto new_it = flush_buffer_impl(it);
             // if (new_it == it) {
-	    //   return false;
+            //   return false;
             // }
             return buffer_was_empty;
         }
@@ -236,10 +277,13 @@ public:
     }
 
     void flush_all_buffers_and_poll_until_reactivated(MessageHandler<MessageType> auto&& on_message) {
-        flush_all_buffers_impl(buffers_.end(), [&] {
-            poll(std::forward<decltype(on_message)>(on_message));
-            return termination_state() == TerminationState::active;
-        }, false);
+        flush_all_buffers_impl(
+            buffers_.end(),
+            [&] {
+                poll(std::forward<decltype(on_message)>(on_message));
+                return termination_state() == TerminationState::active;
+            },
+            false);
     }
 
     void flush_largest_buffer() {
@@ -250,7 +294,7 @@ public:
     /// (not necessarily the underlying data) is moved to the handler when
     /// called.
     bool poll(MessageHandler<MessageType> auto&& on_message) {
-      return queue_.poll(split_handler(on_message), [&](std::size_t receipt, BufferContainer buffer) {
+        return queue_.poll(split_handler(on_message), [&](std::size_t receipt, BufferContainer buffer) {
             // find slot associated with receipt and clean it up.
             // auto it = std::ranges::find_if(in_transit_buffers_,
             //                                [&](std::optional<std::pair<std::size_t, BufferContainer>>& elem) {
@@ -263,8 +307,13 @@ public:
             // auto buf = std::move(*it).value();
             // available_in_transit_slots_++;
             // KASSERT(!it->has_value());
-	    buffer.resize(0); // this does not reduce the capacity
-	    buffer_free_list_.emplace_back(std::move(buffer));
+            auto old_capacity = buffer.capacity();
+            buffer.resize(0);  // this does not reduce the capacity
+            auto new_capacity = buffer.capacity();
+            // if (old_capacity != new_capacity) {
+            //     spdlog::debug("Changing buffer capacity from {} to {}", old_capacity, new_capacity);
+            // }
+            buffer_free_list_.emplace_back(std::move(buffer));
         });
     }
 
@@ -370,7 +419,7 @@ public:
     }
 
     [[nodiscard]] size_t local_threshold() const {
-         if (local_threshold_bytes_ == std::numeric_limits<std::size_t>::max()) {
+        if (local_threshold_bytes_ == std::numeric_limits<std::size_t>::max()) {
             return std::numeric_limits<std::size_t>::max();
         }
         return local_threshold_bytes_ / sizeof(BufferType);
@@ -404,16 +453,18 @@ public:
 
 private:
     /// @return an iterator to the next buffer, or the input iterator if flushing failed
-  auto flush_buffer_impl(BufferMap::iterator buffer_it, bool erase = true) -> BufferMap::iterator {
+    auto flush_buffer_impl(BufferMap::iterator buffer_it, bool erase = true) -> BufferMap::iterator {
         KASSERT(buffer_it != buffers_.end(), "Trying to flush non-existing buffer.");
         auto& [receiver, buffer] = *buffer_it;
         if (buffer.empty()) {
+            // spdlog::debug("Buffer for rank {} is empty", receiver);
             return ++buffer_it;
         }
         auto pre_cleanup_buffer_size = buffer.size();
         pre_send_cleanup(buffer, receiver);
         // we don't send if the cleanup has emptied the buffer
         if (buffer.empty()) {
+            // spdlog::debug("Buffer for rank {} is empty after cleanup", receiver);
             return ++buffer_it;
         }
         flush_buffer_calls++;
@@ -428,38 +479,39 @@ private:
         // available_in_transit_slots_--;
         // auto buf = std::ranges::ref_view{(*it)->second};
         if (queue_.total_remaining_capacity() == 0) {
-	  return buffer_it;
+            return buffer_it;
         }
-	auto receipt = queue_.post_message(std::move(buffer_it->second), receiver);
-	KASSERT(receipt.has_value());
+        auto receipt = queue_.post_message(std::move(buffer_it->second), receiver);
+        KASSERT(receipt.has_value());
         // posting the message should never fail, because we check for remaining capacity
         global_buffer_size_ -= pre_cleanup_buffer_size;
         if (erase) {
             return buffers_.erase(buffer_it);
         }
         return ++buffer_it;
-       
     }
 
     /// if after_flush_hook return true, this breaks the loop
-  bool flush_all_buffers_impl(BufferMap::iterator current_buffer, std::predicate<> auto&& after_flush_hook, bool break_when_flush_fails = true) {
+    bool flush_all_buffers_impl(BufferMap::iterator current_buffer,
+                                std::predicate<> auto&& after_flush_hook,
+                                bool break_when_flush_fails = true) {
         auto it = buffers_.begin();
-	bool flushed_something = false;
+        bool flushed_something = false;
         while (it != buffers_.end()) {
             auto new_it = flush_buffer_impl(it, it != current_buffer);
             if (new_it != it) {
                 flushed_something = true;
-		it = new_it;
+                it = new_it;
             } else {
-	      if (break_when_flush_fails) {
-                  return flushed_something;
-	      }
+                if (break_when_flush_fails) {
+                    return flushed_something;
+                }
             }
             if (after_flush_hook()) {
                 return flushed_something;
             }
         }
-	return flushed_something;
+        return flushed_something;
     }
 
     [[nodiscard]] bool flush_largest_buffer_impl(BufferMap::iterator current_buffer) {
@@ -467,9 +519,9 @@ private:
                                                [](auto& a, auto& b) { return a.second.size() < b.second.size(); });
         if (largest_buffer != buffers_.end()) {
             auto it = flush_buffer_impl(largest_buffer, largest_buffer != current_buffer);
-	    return it != largest_buffer;
+            return it != largest_buffer;
         }
-	return true;
+        return true;
     }
 
     auto split_handler(MessageHandler<MessageType> auto&& on_message) {
@@ -492,14 +544,14 @@ private:
             }
             case FlushStrategy::random: {
                 throw std::runtime_error("Random flush strategy not implemented");
-		return false;
+                return false;
             }
             case FlushStrategy::largest: {
                 return flush_largest_buffer_impl(current_buffer);
             }
         }
-	// unreachable
-	return false;
+        // unreachable
+        return false;
     }
 
     bool check_for_global_buffer_overflow(std::uint64_t buffer_size_delta) const {
@@ -523,6 +575,8 @@ private:
     MessageQueue<BufferType, BufferContainer, ReceiveBufferContainer> queue_;
     BufferMap buffers_;
     BufferList buffer_free_list_;
+    std::size_t num_send_buffers_ = 0;
+    std::size_t max_num_send_buffers_ = std::numeric_limits<std::size_t>::max();
     std::vector<std::optional<std::pair<std::size_t, BufferContainer>>> in_transit_buffers_;
     std::size_t available_in_transit_slots_;
     Merger merge;
