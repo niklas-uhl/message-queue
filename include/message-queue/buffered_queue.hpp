@@ -430,9 +430,9 @@ private:
         if (queue_.total_remaining_capacity() == 0) {
 	  return buffer_it;
         }
-        auto receipt = queue_.post_message(
-            std::move(buffer_it->second),
-            receiver);  // posting the message should never fail, because we check for remaining capacity
+	auto receipt = queue_.post_message(std::move(buffer_it->second), receiver);
+	KASSERT(receipt.has_value());
+        // posting the message should never fail, because we check for remaining capacity
         global_buffer_size_ -= pre_cleanup_buffer_size;
         if (erase) {
             return buffers_.erase(buffer_it);

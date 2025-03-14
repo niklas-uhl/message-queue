@@ -568,13 +568,18 @@ public:
     }
 
     [[nodiscard]] std::size_t remaining_message_box_capacity() const {
-      return message_box_capacity_ - outgoing_message_box.size();
+        if (message_box_capacity_ == std::numeric_limits<std::size_t>::max()) {
+            std::numeric_limits<std::size_t>::max();
+        }
+        return message_box_capacity_ - outgoing_message_box.size();
     }
 
     [[nodiscard]] std::size_t total_remaining_capacity() const {
-      return empty_send_slots() + remaining_message_box_capacity();
+        if (remaining_message_box_capacity() == std::numeric_limits<std::size_t>::max()) {
+            return std::numeric_limits<std::size_t>::max();
+        }
+        return empty_send_slots() + remaining_message_box_capacity();
     }
-    
 
     /// Post a message to the message queue
     /// Posting a message may fail if the message box is full and no send slots are available.
@@ -599,33 +604,31 @@ public:
         handle.set_message(std::move(message));
         handle.set_receiver(receiver);
         handle.set_request_id(this->request_id_);
-        if (outgoing_message_box.empty()) {
+	
+        if (outgoing_message_box.empty() && empty_send_slots() > 0) {
             // we can try to send directly
             auto returned_handle = try_send_something(-1, std::move(handle));
             if (returned_handle.has_value()) {
                 // no slots available
                 return std::nullopt;
-            } else {
-                // succeeded
-                auto receipt = std::optional{this->request_id_};
-                this->request_id_++;
-                local_message_count.send++;
-                return receipt;
-            }
-        } else {
-            // try appending to the message box
- 	    try_send_something_from_message_box(); // ensure that we don't "waste" an empty slot
-            if (outgoing_message_box.size() >= message_box_capacity_) {
-                // the message box is full
-                return std::nullopt;
-            }
-            outgoing_message_box.emplace_back(std::move(handle));
+            }  // succeeded
             auto receipt = std::optional{this->request_id_};
             this->request_id_++;
-            try_send_something_from_message_box();
             local_message_count.send++;
             return receipt;
         }
+        // try appending to the message box
+        try_send_something_from_message_box();  // ensure that we don't "waste" an empty slot
+        if (outgoing_message_box.size() >= message_box_capacity_) {
+            // the message box is full
+            return std::nullopt;
+        }
+        outgoing_message_box.emplace_back(std::move(handle));
+        auto receipt = std::optional{this->request_id_};
+        this->request_id_++;
+        try_send_something_from_message_box();
+        local_message_count.send++;
+        return receipt;
     }
 
     auto post_message(T message, PEID receiver) -> std::optional<std::size_t> {
