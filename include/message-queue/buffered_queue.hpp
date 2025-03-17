@@ -138,7 +138,8 @@ public:
                            BufferProvider<BufferContainer> auto&& get_new_buffer) {
         auto it = buffers_.find(receiver);
         if (it == buffers_.end()) {
-            it = buffers_.emplace(receiver, get_new_buffer()).first;
+	    it = buffers_.emplace(receiver, BufferContainer {}).first;
+	    it->second = get_new_buffer();
         }
 
         auto& buffer = it->second;
@@ -295,25 +296,7 @@ public:
     /// called.
     bool poll(MessageHandler<MessageType> auto&& on_message) {
         return queue_.poll(split_handler(on_message), [&](std::size_t receipt, BufferContainer buffer) {
-            // find slot associated with receipt and clean it up.
-            // auto it = std::ranges::find_if(in_transit_buffers_,
-            //                                [&](std::optional<std::pair<std::size_t, BufferContainer>>& elem) {
-            //                                    if (!elem.has_value()) {
-            //                                        return false;
-            //                                    }
-            //                                    return elem->first == receipt;
-            //                                });
-            // KASSERT(it != in_transit_buffers_.end());
-            // auto buf = std::move(*it).value();
-            // available_in_transit_slots_++;
-            // KASSERT(!it->has_value());
-            auto old_capacity = buffer.capacity();
-            buffer.resize(0);  // this does not reduce the capacity
-            auto new_capacity = buffer.capacity();
-            // if (old_capacity != new_capacity) {
-            //     spdlog::debug("Changing buffer capacity from {} to {}", old_capacity, new_capacity);
-            // }
-            buffer_free_list_.emplace_back(std::move(buffer));
+            recover_buffer(receipt, std::move(buffer));
         });
     }
 
@@ -333,7 +316,10 @@ public:
             // flush_all_buffers();
         };
         in_terminate = true;
-        bool ret = queue_.terminate(split_handler(on_message), before_next_message_counting_round_hook, progress_hook);
+        bool ret = queue_.terminate(
+            split_handler(on_message),
+            [&](std::size_t receipt, BufferContainer buffer) { recover_buffer(receipt, std::move(buffer)); },
+            before_next_message_counting_round_hook, progress_hook);
         in_terminate = false;
         return ret;
     }
@@ -347,7 +333,8 @@ public:
     }
 
     bool progress_sending() {
-        return queue_.progress_sending();
+        return queue_.progress_sending(
+            [&](std::size_t receipt, BufferContainer buffer) { recover_buffer(receipt, std::move(buffer)); });
     }
 
     bool probe_for_messages(MessageHandler<MessageType> auto&& on_message) {
@@ -530,6 +517,28 @@ private:
                 on_message(std::move(env));
             }
         };
+    }
+
+    auto recover_buffer(std::size_t receipt, BufferContainer buffer) {
+        // find slot associated with receipt and clean it up.
+        // auto it = std::ranges::find_if(in_transit_buffers_,
+        //                                [&](std::optional<std::pair<std::size_t, BufferContainer>>& elem) {
+        //                                    if (!elem.has_value()) {
+        //                                        return false;
+        //                                    }
+        //                                    return elem->first == receipt;
+        //                                });
+        // KASSERT(it != in_transit_buffers_.end());
+        // auto buf = std::move(*it).value();
+        // available_in_transit_slots_++;
+        // KASSERT(!it->has_value());
+        auto old_capacity = buffer.capacity();
+        buffer.resize(0);  // this does not reduce the capacity
+        auto new_capacity = buffer.capacity();
+        // if (old_capacity != new_capacity) {
+        //     spdlog::debug("Changing buffer capacity from {} to {}", old_capacity, new_capacity);
+        // }
+        buffer_free_list_.emplace_back(std::move(buffer));
     }
 
     /// @return returns false iff resolve failed

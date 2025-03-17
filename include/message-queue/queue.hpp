@@ -48,7 +48,7 @@ public:
 
     template <typename CompletionFunction>
     void test_some(CompletionFunction&& on_complete = [](int) {}) {
-        int outcount;
+        int outcount = 0;
         max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
         MPI_Testsome(active_range.second - active_range.first,  // count
                      requests.data() + active_range.first,      // requests
@@ -70,8 +70,8 @@ public:
 
     template <typename CompletionFunction>
     void test_any(CompletionFunction&& on_complete = [](int) {}) {
-        int flag;
-        int index;
+        int flag = 0;
+        int index = 0;
         max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
         MPI_Testany(active_range.second - active_range.first,  // count
                     requests.data() + active_range.first,      // requests
@@ -95,7 +95,7 @@ public:
             if (requests[i] == MPI_REQUEST_NULL) {
                 continue;
             }
-            int flag;
+            int flag = 0;
             MPI_Test(&requests[i], &flag, MPI_STATUS_IGNORE);
             if (flag) {
                 remove_from_active_range(i);
@@ -113,7 +113,7 @@ public:
             if (requests[i] == MPI_REQUEST_NULL) {
                 continue;
             }
-            int flag;
+            int flag = 0;
             MPI_Test(&requests[i], &flag, MPI_STATUS_IGNORE);
             if (flag) {
                 remove_from_active_range(i);
@@ -152,12 +152,8 @@ private:
 
     void add_to_active_range(int index) {
         active_requests_++;
-        if (index < active_range.first) {
-            active_range.first = index;
-        }
-        if (index + 1 > active_range.second) {
-            active_range.second = index + 1;
-        }
+        active_range.first = std::min(index, active_range.first);
+        active_range.second = std::max(index + 1, active_range.second);
     }
 
     void remove_from_active_range(int index) {
@@ -209,6 +205,10 @@ public:
 
     int tag() const {
         return tag_;
+    }
+
+    std::optional<MessageContainer> const& message() const {
+      return message_;
     }
 
     MessageContainer extract_message() {
@@ -371,6 +371,8 @@ template <MPIType T,
 class MessageQueue {
     enum class State { posted, initiated, completed };
 
+    std::size_t buffer_owned_by_queue_ = 0;
+
     bool try_send_something_from_message_box(int hint = -1) {
         if (outgoing_message_box.empty()) {
             return false;
@@ -394,6 +396,8 @@ class MessageQueue {
             message_to_send.set_request(req_ptr);
             // atomic_debug(fmt::format("isend msg={}, to {}, using request {}", message_to_send.message,
             // message_to_send.receiver, index));
+            KASSERT(!in_transit_messages[index].message().has_value());
+            buffer_owned_by_queue_++;
             in_transit_messages[index].swap(message_to_send);
             in_transit_messages[index].initiate_send();
             // KASSERT(*message_to_send.request_ != MPI_REQUEST_NULL);
@@ -566,6 +570,10 @@ public:
         return request_pool.inactive_requests();
     }
 
+    [[nodiscard]] std::size_t used_send_slots() const {
+      return request_pool.active_requests();
+    }
+
     [[nodiscard]] std::size_t remaining_message_box_capacity() const {
         if (message_box_capacity_ == std::numeric_limits<std::size_t>::max()) {
             std::numeric_limits<std::size_t>::max();
@@ -646,6 +654,7 @@ public:
                 request_pool.test_some([&](int completed_request_index) {
                     std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
                     auto message = in_transit_messages[completed_request_index].extract_message();
+                    buffer_owned_by_queue_--;
                     in_transit_messages[completed_request_index].emplace({comm_});
                     something_happenend = true;
                     if constexpr (move_back_message) {
@@ -831,10 +840,10 @@ public:
     }
 
     bool poll(MessageHandler<T, MessageContainer> auto&& on_message,
-              SendFinishedCallback<MessageContainer> auto on_finished_sending) {
+              SendFinishedCallback<MessageContainer> auto&& on_finished_sending) {
         bool something_happenend = false;
-        something_happenend |= progress_sending(on_finished_sending);
-        something_happenend |= probe_for_messages(on_message);
+        something_happenend |= progress_sending(std::forward<decltype(on_finished_sending)>(on_finished_sending));
+        something_happenend |= probe_for_messages(std::forward<decltype(on_message)>(on_message));
         return something_happenend;
     }
 
@@ -884,9 +893,11 @@ public:
 
     void poll_until_message_box_empty(
         MessageHandler<T, MessageContainer> auto&& on_message,
+        SendFinishedCallback<MessageContainer> auto&& on_finished_sending,
         std::predicate<> auto&& should_stop_polling = [] { return false; }) {
         while (!outgoing_message_box.empty()) {
-            poll(on_message);
+            poll(std::forward<decltype(on_message)>(on_message),
+                 std::forward<decltype(on_finished_sending)>(on_finished_sending));
             if (should_stop_polling()) {
                 return;
             }
@@ -913,6 +924,7 @@ public:
     }
 
     [[nodiscard]] bool terminate(MessageHandler<T, MessageContainer> auto&& on_message,
+                                 SendFinishedCallback<MessageContainer> auto&& on_finished_sending,
                                  std::invocable<> auto&& before_next_message_counting_round_hook,
                                  std::invocable<> auto&& progress_hook) {
         termination_state_ = TerminationState::trying_termination;
@@ -921,7 +933,9 @@ public:
             if (termination_state_ == TerminationState::active) {
                 return false;
             }
-            poll_until_message_box_empty(on_message, [&] { return termination_state_ == TerminationState::active; });
+            poll_until_message_box_empty(std::forward<decltype(on_message)>(on_message),
+                                         std::forward<decltype(on_finished_sending)>(on_finished_sending),
+                                         [&] { return termination_state_ == TerminationState::active; });
             if (termination_state_ == TerminationState::active) {
                 return false;
             }
@@ -930,7 +944,7 @@ public:
             // if the the message box is empty upon calling this function
             // we never get to poll if message counting finishes instantly
             do {
-                poll(on_message);
+                poll(std::forward<decltype(on_message)>(on_message), std::forward<decltype(on_finished_sending)>(on_finished_sending));
                 progress_hook();
                 if (termination_state_ == TerminationState::active) {
                     return false;
