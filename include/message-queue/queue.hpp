@@ -652,7 +652,7 @@ public:
         constexpr bool move_back_message = std::invocable<decltype(on_finished_sending), std::size_t, MessageContainer>;
         // check for finished sends and try starting new ones
         bool something_happenend = false;
-        if (true || !use_test_any_) {
+        if (!use_test_any_) {
             if (!use_custom_implementation_) {
                 request_pool.test_some([&](int completed_request_index) {
                     std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
@@ -684,7 +684,7 @@ public:
             }
         } else {
             bool progress = true;
-            while (progress) {
+            // while (progress) {
                 progress = false;
                 if (!use_custom_implementation_) {
                     request_pool.test_any([&](int completed_request_index) {
@@ -715,7 +715,7 @@ public:
                         try_send_something_from_message_box(completed_request_index);
                     });
                 }
-            }
+            // }
         }
         while (try_send_something_from_message_box()) {
         }
