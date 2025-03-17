@@ -116,11 +116,18 @@ public:
     }
 
     auto get_some_free_buffer() -> std::optional<BufferContainer> {
-        spdlog::debug("free_list.size={}", buffer_free_list_.size());
+        // spdlog::debug("free_list.size={}", buffer_free_list_.size());
         if (buffer_free_list_.empty()) {
             if (num_send_buffers_ < max_num_send_buffers_) {
                 reserve_send_buffers(1);
             } else {
+                if (buffers_.size() - 1 >= max_num_send_buffers_ /* minus the buffer we try to create */) {
+		  spdlog::warn("Flushing largest buffer to recover buffer space.");
+		  flush_largest_buffer();
+                }
+                spdlog::debug("free_list={} + queue.used_send_slots={} + buffers_.size()={} - 1 == num_send_buffers={}",
+                              buffer_free_list_.size(), queue_.used_send_slots(), buffers_.size(), num_send_buffers_);
+		KASSERT(buffer_free_list_.size() + queue_.used_send_slots() + buffers_.size() - 1 == num_send_buffers_);
                 return std::nullopt;
             }
         }
