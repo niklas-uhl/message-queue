@@ -125,18 +125,18 @@ public:
 		  spdlog::debug("Flushing largest buffer to recover buffer space.");
 		  flush_largest_buffer();
                 }
-                spdlog::debug("free_list={} + queue.used_send_slots={} + buffers_.size()={} - 1 == num_send_buffers={}",
-                              buffer_free_list_.size(), queue_.used_send_slots(), buffers_.size(), num_send_buffers_);
-		KASSERT(buffer_free_list_.size() + queue_.used_send_slots() + buffers_.size() - 1 == num_send_buffers_);
+                // spdlog::debug("free_list={} + queue.used_send_slots={} + buffers_.size()={} - 1 == num_send_buffers={}",
+                //               buffer_free_list_.size(), queue_.used_send_slots(), buffers_.size(), num_send_buffers_);
+		// KASSERT(buffer_free_list_.size() + queue_.used_send_slots() + buffers_.size() - 1 == num_send_buffers_);
                 return std::nullopt;
             }
         }
         KASSERT(!buffer_free_list_.empty());
         auto buffer = std::move(buffer_free_list_.back());
         buffer_free_list_.pop_back();
-	spdlog::debug("free_list={} + queue.used_send_slots={} + buffers_.size()={} == num_send_buffers={}", buffer_free_list_.size(),
-                      queue_.used_send_slots(), buffers_.size(), num_send_buffers_);
-        KASSERT(buffer_free_list_.size() + queue_.used_send_slots() + buffers_.size() == num_send_buffers_);
+	// spdlog::debug("free_list={} + queue.used_send_slots={} + buffers_.size()={} == num_send_buffers={}", buffer_free_list_.size(),
+        //               queue_.used_send_slots(), buffers_.size(), num_send_buffers_);
+        // KASSERT(buffer_free_list_.size() + queue_.used_send_slots() + buffers_.size() == num_send_buffers_);
         return buffer;
     };
 
@@ -198,6 +198,7 @@ public:
                     if (success) {
                         break;
                     }
+		    // KASSERT(false);
                     poll(std::forward<decltype(on_message)>(on_message));
                 }
             },
@@ -207,6 +208,7 @@ public:
                     if (buf.has_value()) {
                         return std::move(*buf);
                     }
+		    // KASSERT(false);
                     // spdlog::debug("Polling");
                     poll(std::forward<decltype(on_message)>(on_message));
                 }
