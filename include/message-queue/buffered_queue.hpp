@@ -33,6 +33,8 @@
 #include "message-queue/concepts.hpp"
 #include "message-queue/queue.hpp"
 
+#include <spdlog/spdlog.h>
+
 namespace message_queue {
 
 enum class FlushStrategy { local, global, random, largest };
@@ -114,6 +116,7 @@ public:
     }
 
     auto get_some_free_buffer() -> std::optional<BufferContainer> {
+        spdlog::debug("free_list.size={}", buffer_free_list_.size());
         if (buffer_free_list_.empty()) {
             if (num_send_buffers_ < max_num_send_buffers_) {
                 reserve_send_buffers(1);
@@ -124,6 +127,9 @@ public:
         KASSERT(!buffer_free_list_.empty());
         auto buffer = std::move(buffer_free_list_.back());
         buffer_free_list_.pop_back();
+	spdlog::debug("free_list={} + queue.used_send_slots={} + buffers_.size()={} == num_send_buffers={}", buffer_free_list_.size(),
+                      queue_.used_send_slots(), buffers_.size(), num_send_buffers_);
+        KASSERT(buffer_free_list_.size() + queue_.used_send_slots() + buffers_.size() == num_send_buffers_);
         return buffer;
     };
 

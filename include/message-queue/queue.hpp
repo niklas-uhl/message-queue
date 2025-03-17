@@ -35,6 +35,8 @@
 #include "message-queue/concepts.hpp"
 #include "message-queue/debug_print.hpp"
 
+#include <spdlog/spdlog.h>
+
 namespace message_queue {
 
 namespace internal {
@@ -398,6 +400,7 @@ class MessageQueue {
             // message_to_send.receiver, index));
             KASSERT(!in_transit_messages[index].message().has_value());
             buffer_owned_by_queue_++;
+	    spdlog::debug("buffers_owned_by_queue={}", buffer_owned_by_queue_);
             in_transit_messages[index].swap(message_to_send);
             in_transit_messages[index].initiate_send();
             // KASSERT(*message_to_send.request_ != MPI_REQUEST_NULL);
@@ -655,6 +658,7 @@ public:
                     std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
                     auto message = in_transit_messages[completed_request_index].extract_message();
                     buffer_owned_by_queue_--;
+		    spdlog::debug("buffers_owned_by_queue={}", buffer_owned_by_queue_);
                     in_transit_messages[completed_request_index].emplace({comm_});
                     something_happenend = true;
                     if constexpr (move_back_message) {
