@@ -295,9 +295,11 @@ public:
     void flush_all_buffers_and_poll_until_reactivated(MessageHandler<MessageType> auto&& on_message) {
         flush_all_buffers_impl(
             buffers_.end(),
-            [&] {
+            [&](bool current_flush_successful) {
+	      if (!current_flush_successful) {
                 poll(std::forward<decltype(on_message)>(on_message));
-                return termination_state() == TerminationState::active;
+	      }
+	      return termination_state() == TerminationState::active;
             },
             false);
     }
@@ -494,24 +496,34 @@ private:
     }
 
     /// if after_flush_hook return true, this breaks the loop
+    template<typename AfterFlushHook> requires std::predicate<AfterFlushHook> || std::predicate<AfterFlushHook,bool>
     bool flush_all_buffers_impl(BufferMap::iterator current_buffer,
-                                std::predicate<> auto&& after_flush_hook,
+                                AfterFlushHook&& after_flush_hook,
                                 bool break_when_flush_fails = true) {
         auto it = buffers_.begin();
         bool flushed_something = false;
         while (it != buffers_.end()) {
+	    bool current_flush_successful = false;
             auto new_it = flush_buffer_impl(it, it != current_buffer);
             if (new_it != it) {
                 flushed_something = true;
                 it = new_it;
+		current_flush_successful = true;
             } else {
                 if (break_when_flush_fails) {
                     return flushed_something;
                 }
             }
-            if (after_flush_hook()) {
+	    if constexpr (std::predicate<AfterFlushHook>) {
+	      if (after_flush_hook()) {
                 return flushed_something;
-            }
+	      }
+	    } else {
+	      if (after_flush_hook(current_flush_successful)) {
+                return flushed_something;
+	      }
+	    }
+
         }
         return flushed_something;
     }
