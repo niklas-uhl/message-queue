@@ -194,12 +194,12 @@ public:
             std::forward<decltype(message)>(message), receiver, envelope_sender, envelope_receiver, tag,
             [&](auto it) {
                 while (true) {
+                    poll(std::forward<decltype(on_message)>(on_message));
                     bool success = resolve_overflow(it);
                     if (success) {
                         break;
                     }
 		    // KASSERT(false);
-                    poll(std::forward<decltype(on_message)>(on_message));
                 }
             },
             [&] {
