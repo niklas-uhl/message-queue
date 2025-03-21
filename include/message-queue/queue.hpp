@@ -652,6 +652,9 @@ public:
         constexpr bool move_back_message = std::invocable<decltype(on_finished_sending), std::size_t, MessageContainer>;
         // check for finished sends and try starting new ones
         bool something_happenend = false;
+        if (request_pool.active_requests() == 0) {
+	    return true;
+	}
         if (!use_test_any_) {
             if (!use_custom_implementation_) {
                 request_pool.test_some([&](int completed_request_index) {
@@ -839,16 +842,34 @@ public:
         return false;
     }
 
-    bool poll(MessageHandler<T, MessageContainer> auto&& on_message) {
-        return poll(on_message, [](std::size_t) {});
+    auto poll(MessageHandler<T, MessageContainer> auto &&on_message)
+        -> std::optional<std::pair<bool, bool>> {
+      return poll(on_message, [](std::size_t) {});
     }
 
-    bool poll(MessageHandler<T, MessageContainer> auto&& on_message,
-              SendFinishedCallback<MessageContainer> auto&& on_finished_sending) {
-        bool something_happenend = false;
-        something_happenend |= progress_sending(std::forward<decltype(on_finished_sending)>(on_finished_sending));
-        something_happenend |= probe_for_messages(std::forward<decltype(on_message)>(on_message));
-        return something_happenend;
+    std::chrono::time_point<std::chrono::high_resolution_clock> last_poll_time = std::chrono::high_resolution_clock::now();
+
+    auto
+    poll(MessageHandler<T, MessageContainer> auto &&on_message,
+         SendFinishedCallback<MessageContainer> auto &&on_finished_sending,
+         std::chrono::duration<double> frequency = std::chrono::milliseconds(0))
+        -> std::optional<std::pair<bool, bool>> {
+      auto now = std::chrono::high_resolution_clock::now();
+      if (frequency.count() > 0) {
+        if (now - last_poll_time < frequency) {
+          return std::nullopt;
+        }
+        last_poll_time = now;
+      }
+      // bool something_happenend = false;
+      bool send_finished_something = progress_sending(
+          std::forward<decltype(on_finished_sending)>(on_finished_sending));
+      bool probe_finished_somehting =
+          probe_for_messages(std::forward<decltype(on_message)>(on_message));
+      if (send_finished_something || probe_finished_somehting) {
+        return std::pair{send_finished_something, probe_finished_somehting};
+      }
+      return std::nullopt;
     }
 
     void reset() {
@@ -917,10 +938,19 @@ public:
         }
     }
 
-    bool message_counting_finished() {
+    std::chrono::time_point<std::chrono::high_resolution_clock> last_termination_check_time = std::chrono::high_resolution_clock::now();
+
+    bool message_counting_finished(std::chrono::duration<double> frequency = std::chrono::milliseconds(0)) {
         if (termination_request == MPI_REQUEST_NULL) {
             return true;
         }
+	if (frequency.count() > 0) {
+	    auto now = std::chrono::high_resolution_clock::now();
+	    if (now - last_termination_check_time < frequency) {
+		return false;
+	    }
+	    last_termination_check_time = now;
+	}
         int reduce_finished = false;
         int err = MPI_Test(&termination_request, &reduce_finished, MPI_STATUS_IGNORE);
         check_mpi_error(err, __FILE__, __LINE__);
@@ -948,11 +978,12 @@ public:
             // if the the message box is empty upon calling this function
             // we never get to poll if message counting finishes instantly
             do {
-                poll(std::forward<decltype(on_message)>(on_message), std::forward<decltype(on_finished_sending)>(on_finished_sending));
-                progress_hook();
-                if (termination_state_ == TerminationState::active) {
-                    return false;
-                }
+	      poll(std::forward<decltype(on_message)>(on_message), std::forward<decltype(on_finished_sending)>(on_finished_sending));
+	      progress_hook();
+	      if (termination_state_ == TerminationState::active) {
+		spdlog::warn("Terminate cancelled");
+		return false;
+	      }
             } while (!message_counting_finished());
             if (check_termination_condition()) {
                 termination_state_ = TerminationState::terminated;

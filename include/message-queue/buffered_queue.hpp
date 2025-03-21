@@ -184,35 +184,39 @@ public:
         return overflow;
     }
 
-    bool post_message_blocking(InputMessageRange<MessageType> auto&& message,
-                               PEID receiver,
-                               PEID envelope_sender,
-                               PEID envelope_receiver,
-                               int tag,
-                               MessageHandler<MessageType> auto&& on_message) {
-        return post_message_impl(
-            std::forward<decltype(message)>(message), receiver, envelope_sender, envelope_receiver, tag,
-            [&](auto it) {
-                while (true) {
-                    poll(std::forward<decltype(on_message)>(on_message));
-                    bool success = resolve_overflow(it);
-                    if (success) {
-                        break;
-                    }
-		    // KASSERT(false);
-                }
-            },
-            [&] {
-                while (true) {
-                    auto buf = get_some_free_buffer();
-                    if (buf.has_value()) {
-                        return std::move(*buf);
-                    }
-		    // KASSERT(false);
-                    // spdlog::debug("Polling");
-                    poll(std::forward<decltype(on_message)>(on_message));
-                }
-            });
+    bool post_message_blocking(InputMessageRange<MessageType> auto &&message,
+                               PEID receiver, PEID envelope_sender,
+                               PEID envelope_receiver, int tag,
+                               MessageHandler<MessageType> auto &&on_message) {
+      auto ret =  post_message_impl(
+          std::forward<decltype(message)>(message), receiver, envelope_sender,
+          envelope_receiver, tag,
+				    [&](auto it) {
+            while (true) {
+              auto res = poll(std::forward<decltype(on_message)>(on_message));
+              if (res && res->first) { // finished some send
+                break;
+              }
+            }
+            bool success = resolve_overflow(it);
+            if (success) {
+              return;
+              // break;
+            }
+            // KASSERT(false);
+          },
+          [&] {
+            while (true) {
+              auto buf = get_some_free_buffer();
+              if (buf.has_value()) {
+                return std::move(*buf);
+              }
+              // KASSERT(false);
+              // spdlog::debug("Polling");
+              poll(std::forward<decltype(on_message)>(on_message));
+            }
+          });
+      return ret;
     }
 
     /// Note: messages have to be passed as rvalues. If you want to send static
@@ -289,32 +293,38 @@ public:
     }
 
     void flush_all_buffers() {
-        flush_all_buffers_impl(buffers_.end(), [] { return false; });
+      flush_all_buffers_impl(buffers_.end(), [] {}, [] { return false; });
     }
 
-    void flush_all_buffers_and_poll_until_reactivated(MessageHandler<MessageType> auto&& on_message) {
-        flush_all_buffers_impl(
-            buffers_.end(),
-            [&](bool current_flush_successful) {
-	      if (!current_flush_successful) {
-                poll(std::forward<decltype(on_message)>(on_message));
-	      }
-	      return termination_state() == TerminationState::active;
-            },
-            false);
+    void flush_all_buffers_and_poll_until_reactivated(
+        MessageHandler<MessageType> auto &&on_message) {
+      flush_all_buffers_impl(
+          buffers_.end(),
+          [&] { // pre_flush_hook
+            poll(std::forward<decltype(on_message)>(on_message));
+          },
+          [&](bool current_flush_successful) { // post flush_hook
+            // if (!current_flush_successful) {
+            // poll(std::forward<decltype(on_message)>(on_message));
+            // }
+            return termination_state() == TerminationState::active;
+          },
+          false);
     }
 
     void flush_largest_buffer() {
         flush_largest_buffer_impl(buffers_.end());
     }
 
-    /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
-    /// (not necessarily the underlying data) is moved to the handler when
-    /// called.
-    bool poll(MessageHandler<MessageType> auto&& on_message) {
-        return queue_.poll(split_handler(on_message), [&](std::size_t receipt, BufferContainer buffer) {
-            recover_buffer(receipt, std::move(buffer));
-        });
+    /// Note: Message handlers take a MessageEnvelope as single argument. The
+    /// Envelope (not necessarily the underlying data) is moved to the handler
+    /// when called.
+    auto poll(MessageHandler<MessageType> auto &&on_message)
+        -> std::optional<std::pair<bool, bool>> {
+      return queue_.poll(split_handler(on_message),
+                         [&](std::size_t receipt, BufferContainer buffer) {
+                           recover_buffer(receipt, std::move(buffer));
+                         });
     }
 
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
@@ -495,37 +505,42 @@ private:
         return ++buffer_it;
     }
 
-    /// if after_flush_hook return true, this breaks the loop
-    template<typename AfterFlushHook> requires std::predicate<AfterFlushHook> || std::predicate<AfterFlushHook,bool>
+    /// if post_flush_hook return true, this breaks the loop
+    template <typename PreFlushHook, typename PostFlushHook>
+      requires std::invocable<PreFlushHook> &&
+               (std::predicate<PostFlushHook> ||
+                std::predicate<PostFlushHook, bool>)
     bool flush_all_buffers_impl(BufferMap::iterator current_buffer,
-                                AfterFlushHook&& after_flush_hook,
+                                PreFlushHook &&pre_flush_hook,
+                                PostFlushHook &&post_flush_hook,
                                 bool break_when_flush_fails = true) {
-        auto it = buffers_.begin();
-        bool flushed_something = false;
-        while (it != buffers_.end()) {
-	    bool current_flush_successful = false;
-            auto new_it = flush_buffer_impl(it, it != current_buffer);
-            if (new_it != it) {
-                flushed_something = true;
-                it = new_it;
-		current_flush_successful = true;
-            } else {
-                if (break_when_flush_fails) {
-                    return flushed_something;
-                }
-            }
-	    if constexpr (std::predicate<AfterFlushHook>) {
-	      if (after_flush_hook()) {
-                return flushed_something;
-	      }
-	    } else {
-	      if (after_flush_hook(current_flush_successful)) {
-                return flushed_something;
-	      }
-	    }
-
+      auto it = buffers_.begin();
+      bool flushed_something = false;
+      while (it != buffers_.end()) {
+	pre_flush_hook();
+        bool current_flush_successful = false;
+        auto new_it = flush_buffer_impl(it, it != current_buffer);
+        if (new_it != it) {
+          flushed_something = true;
+          it = new_it;
+          current_flush_successful = true;
+        } else {
+          if (break_when_flush_fails) {
+            return flushed_something;
+          }
         }
-        return flushed_something;
+	bool should_break = [&] {
+	  if constexpr (std::predicate<PostFlushHook>) {
+	    return post_flush_hook();
+	  } else {
+	    return post_flush_hook(current_flush_successful);
+	  }
+	}();
+	if (should_break) {
+	  return flushed_something;
+	}
+      }
+      return flushed_something;
     }
 
     [[nodiscard]] bool flush_largest_buffer_impl(BufferMap::iterator current_buffer) {
@@ -576,7 +591,7 @@ private:
                 return ret != current_buffer;
             }
             case FlushStrategy::global: {
-                return flush_all_buffers_impl(current_buffer, [] { return false; });
+              return flush_all_buffers_impl(current_buffer, [] {}, [] { return false; });
             }
             case FlushStrategy::random: {
                 throw std::runtime_error("Random flush strategy not implemented");

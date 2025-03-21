@@ -130,7 +130,7 @@ public:
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
     /// (not necessarily the underlying data) is moved to the handler when
     /// called.
-    bool poll(MessageHandler<typename queue_type::message_type> auto&& on_message) {
+    auto poll(MessageHandler<typename queue_type::message_type> auto&& on_message) -> std::optional<std::pair<bool, bool>> {
         return queue_type::poll(redirection_handler(on_message));
     }
 
