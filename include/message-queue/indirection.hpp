@@ -92,9 +92,11 @@ static_assert(IndirectionScheme<GridIndirectionScheme>);
 
 template <IndirectionScheme Indirector, typename BufferedQueueType>
 class IndirectionAdapter : public BufferedQueueType {
-public:
+private:
     using queue_type = BufferedQueueType;
-    using MessageType = typename queue_type::MessageType;
+    using MessageType = typename queue_type::message_type;
+
+public:
     IndirectionAdapter(BufferedQueueType queue, Indirector indirector)
         : BufferedQueueType(std::move(queue)), indirection_(std::move(indirector)) {}
 
