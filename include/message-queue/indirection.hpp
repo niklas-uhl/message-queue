@@ -45,6 +45,13 @@ public:
         return receiver != rank();
     }
 
+    [[nodiscard]] auto num_groups() const -> std::size_t {
+        return grid_size_;
+    }
+    [[nodiscard]] auto group_size() const -> std::size_t {
+        return grid_size_;
+    }
+
 private:
     int rank() const {
         int my_rank;
