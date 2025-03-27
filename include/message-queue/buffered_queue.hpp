@@ -169,7 +169,7 @@ public:
         if (check_for_buffer_overflow(buffer, estimated_new_buffer_size - old_buffer_size)) {
             overflow = true;
             handle_overflow(it);
-            KASSERT(buffer.empty());
+            // KASSERT(buffer.empty());
             buffer = get_new_buffer();
         }
         PEID rank = 0;

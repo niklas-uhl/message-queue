@@ -738,21 +738,22 @@ public:
                 MPI_Testsome(static_cast<int>(receive_requests.size()), receive_requests.data(), &outcount,
                              indices.data(), statuses.data());
             } else {
-                int flag;
-                MPI_Testany(static_cast<int>(receive_requests.size()), receive_requests.data(), &indices[0], &flag,
-                            &statuses[0]);
+                int flag = 0;
+                int err = MPI_Testany(static_cast<int>(receive_requests.size()), receive_requests.data(), &indices[0], &flag,
+				      &statuses[0]);
                 if (flag) {
-                    if (indices[0] == MPI_UNDEFINED) {
-                        throw "This should not happen";
-                    }
-                    outcount = 1;
-                } else {
+                  if (indices[0] == MPI_UNDEFINED) {
                     outcount = 0;
+                  } else {
+                    outcount = 1;
+		  }
+                } else {
+                  outcount = 0;
                 }
             }
             // std::cout << "outcount=" << outcount << "\n";
             if (outcount == MPI_UNDEFINED) {
-                throw "This should not happen";
+              throw std::runtime_error("This should not happen, because we always have pending requests");
             }
             for (int i = 0; i < outcount; i++) {
                 something_happenend = true;

@@ -98,7 +98,11 @@ private:
 
 public:
     IndirectionAdapter(BufferedQueueType queue, Indirector indirector)
-        : BufferedQueueType(std::move(queue)), indirection_(std::move(indirector)) {}
+    : BufferedQueueType(std::move(queue)), indirection_(std::move(indirector)) {}
+
+    auto &indirection_scheme() { return indirection_; }
+
+    auto const &indirection_scheme() const { return indirection_; }
 
     bool post_message(InputMessageRange<MessageType> auto&& message,
                       PEID receiver,
