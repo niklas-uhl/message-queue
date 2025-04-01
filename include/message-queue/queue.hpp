@@ -36,6 +36,7 @@
 #include "message-queue/debug_print.hpp"
 
 #include <spdlog/spdlog.h>
+#include <fmt/ranges.h>
 
 namespace message_queue {
 
@@ -146,8 +147,8 @@ public:
     size_t max_active_requests() const {
         return max_active_requests_;
     }
-    ~RequestPool {
-        spdlog::info("max_active_requests={}, request_histogram = {}", max_active_requests, histogram);
+    ~RequestPool() {
+      spdlog::info("max_active_requests={}, request_histogram = {}", max_active_requests(), histogram);
     }
 
 private:
@@ -155,14 +156,17 @@ private:
         max_active_requests_ = std::max(max_active_requests_, active_requests());
     }
 
-    void add_to_active_range(int index) {
+  void add_to_active_range(int index) {
+        spdlog::info("add to range {}", index);
         histogram[index]++;
         active_requests_++;
         active_range.first = std::min(index, active_range.first);
         active_range.second = std::max(index + 1, active_range.second);
     }
 
-    void remove_from_active_range(int index) {
+  void remove_from_active_range(int index) {
+    spdlog::info("remove from range {}", index);
+    last_slot = index;
         active_requests_--;
         if (index == active_range.first) {
             active_range.first++;
@@ -175,6 +179,7 @@ private:
     std::vector<MPI_Request> requests;
     std::vector<int> indices;
     std::vector<int> histogram;
+    int last_slot = -1;
     size_t inactive_request_pointer = 0;
     size_t active_requests_ = 0;
     std::pair<int, int> active_range = {0, 0};
