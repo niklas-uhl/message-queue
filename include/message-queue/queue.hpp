@@ -44,7 +44,7 @@ size_t comm_size(MPI_Comm comm = MPI_COMM_WORLD);
 
 class RequestPool {
 public:
-    RequestPool(std::size_t capacity = 0) : requests(capacity, MPI_REQUEST_NULL), indices(capacity) {}
+  RequestPool(std::size_t capacity = 0) : requests(capacity, MPI_REQUEST_NULL), indices(capacity), histogram(capacity, 0) {}
 
     std::optional<std::pair<int, MPI_Request*>> get_some_inactive_request(int hint = -1);
 
@@ -146,6 +146,9 @@ public:
     size_t max_active_requests() const {
         return max_active_requests_;
     }
+    ~RequestPool {
+        spdlog::info("max_active_requests={}, request_histogram = {}", max_active_requests, histogram);
+    }
 
 private:
     void track_max_active_requests() {
@@ -153,6 +156,7 @@ private:
     }
 
     void add_to_active_range(int index) {
+        histogram[index]++;
         active_requests_++;
         active_range.first = std::min(index, active_range.first);
         active_range.second = std::max(index + 1, active_range.second);
@@ -170,11 +174,13 @@ private:
     }
     std::vector<MPI_Request> requests;
     std::vector<int> indices;
+    std::vector<int> histogram;
     size_t inactive_request_pointer = 0;
     size_t active_requests_ = 0;
     std::pair<int, int> active_range = {0, 0};
     int max_test_size_ = 0;
     std::size_t max_active_requests_ = 0;
+ 
 };
 
 namespace handles {
