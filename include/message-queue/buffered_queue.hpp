@@ -33,6 +33,8 @@
 #include "message-queue/concepts.hpp"
 #include "message-queue/queue.hpp"
 
+#include <kamping/measurements/timer.hpp>
+
 #include <spdlog/spdlog.h>
 
 namespace message_queue {
@@ -70,7 +72,14 @@ public:
           available_in_transit_slots_(in_transit_buffers_.size()),
           merge(std::move(merger)),
           split(std::move(splitter)),
-          pre_send_cleanup(std::move(cleaner)) {}
+          pre_send_cleanup(std::move(cleaner)) {
+      spdlog::info("message_size = {}", sizeof(buffer_type));
+    }
+  ~BufferedMessageQueue() {
+    spdlog::info("poll_pre_overflow = {}, overflows = {}, avg = {}", poll_pre_overflow, overflows,
+		 overflows > 0 ? poll_pre_overflow / overflows : 0
+		 );
+  }
 
     // BufferedMessageQueue(MPI_Comm comm = MPI_COMM_WORLD,
     //                      Merger merger = Merger{},
@@ -184,20 +193,28 @@ public:
         return overflow;
     }
 
+    int poll_pre_overflow = 0;
+    int overflows = 0;
+
     bool post_message_blocking(InputMessageRange<MessageType> auto &&message,
                                PEID receiver, PEID envelope_sender,
                                PEID envelope_receiver, int tag,
                                MessageHandler<MessageType> auto &&on_message) {
+      using namespace kamping::measurements;
       auto ret =  post_message_impl(
           std::forward<decltype(message)>(message), receiver, envelope_sender,
           envelope_receiver, tag,
 				    [&](auto it) {
+				      overflows++;
+            timer().start("poll_pre_overflow");
             while (true) {
+	      poll_pre_overflow++;
               auto res = poll(std::forward<decltype(on_message)>(on_message));
               if (res && res->first) { // finished some send
                 break;
               }
             }
+	    timer().stop_and_add();
             bool success = resolve_overflow(it);
             if (success) {
               return;
@@ -211,6 +228,7 @@ public:
               if (buf.has_value()) {
                 return std::move(*buf);
               }
+	      throw std::runtime_error("This should not happen");
               // KASSERT(false);
               // spdlog::debug("Polling");
               poll(std::forward<decltype(on_message)>(on_message));

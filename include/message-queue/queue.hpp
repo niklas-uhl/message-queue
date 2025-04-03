@@ -35,6 +35,8 @@
 #include "message-queue/concepts.hpp"
 #include "message-queue/debug_print.hpp"
 
+#include <kamping/measurements/timer.hpp>
+
 #include <spdlog/spdlog.h>
 #include <fmt/ranges.h>
 
@@ -74,40 +76,41 @@ public:
   int round_robin_index = 0;
 
     template <typename CompletionFunction>
-    void test_any(CompletionFunction&& on_complete = [](int) {}) {
+    bool test_any(CompletionFunction&& on_complete = [](int) {}) {
         int flag = 0;
         int index = 0;
         max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
-        MPI_Testany(capacity() - round_robin_index,
+        MPI_Testany(capacity(), // - round_robin_index,
 		    // active_range.second - active_range.first,  // count
-                    requests.data() + round_robin_index,      // requests
+                    requests.data(), // + round_robin_index,      // requests
                     &index,                                    // index
                     &flag,                                     // flag
                     MPI_STATUS_IGNORE                          // status
         );
         if (flag && index != MPI_UNDEFINED) {
-            index += round_robin_index;
+	  //index += round_robin_index;
             remove_from_active_range(index);
             track_max_active_requests();
             on_complete(index);
-        } else {
-	  MPI_Testany(round_robin_index,
-		      requests.data(),
-		      &index,
-		      &flag,
-		      MPI_STATUS_IGNORE
-		      );
-	  if (flag && index != MPI_UNDEFINED) {
-            // index += round_robin_index;
-            remove_from_active_range(index);
-            track_max_active_requests();
-            on_complete(index);
-	  }
-	}
-	round_robin_index++;
-	if (round_robin_index == capacity()) {
-	  round_robin_index = 0;
-	}
+        } // else {
+	//   MPI_Testany(round_robin_index,
+	// 	      requests.data(),
+	// 	      &index,
+	// 	      &flag,
+	// 	      MPI_STATUS_IGNORE
+	// 	      );
+	//   if (flag && index != MPI_UNDEFINED) {
+        //     // index += round_robin_index;
+        //     remove_from_active_range(index);
+        //     track_max_active_requests();
+        //     on_complete(index);
+	//   }
+	// }
+	// round_robin_index++;
+	// if (round_robin_index == capacity()) {
+	//   round_robin_index = 0;
+	// }
+	return static_cast<bool>(flag);
     }
 
     /// my request functions {{{
@@ -510,6 +513,7 @@ public:
           reserved_receive_buffer_size_(reserved_receive_buffer_size),
           receive_buffers(num_request_slots),
           receive_requests(num_request_slots, MPI_REQUEST_NULL),
+	  receive_requests_histogram(num_request_slots, 0),
           indices(num_request_slots),
           statuses(num_request_slots),
           request_id_(0),
@@ -571,6 +575,7 @@ public:
     // : MessageQueue(comm, internal::comm_size(comm), 32 * 1024 / sizeof(T)) {}
 
     ~MessageQueue() {
+        spdlog::info("receive_histogram = {}", receive_requests_histogram);
         if (receive_mode_ == ReceiveMode::poll) {
             return;
         }
@@ -683,9 +688,9 @@ public:
         constexpr bool move_back_message = std::invocable<decltype(on_finished_sending), std::size_t, MessageContainer>;
         // check for finished sends and try starting new ones
         bool something_happenend = false;
-        if (request_pool.active_requests() == 0) {
-	    return true;
-	}
+        // if (request_pool.active_requests() == 0) {
+	//     return true;
+	// }
         if (!use_test_any_) {
             if (!use_custom_implementation_) {
                 request_pool.test_some([&](int completed_request_index) {
@@ -721,7 +726,7 @@ public:
             // while (progress) {
                 progress = false;
                 if (!use_custom_implementation_) {
-                    request_pool.test_any([&](int completed_request_index) {
+                    return request_pool.test_any([&](int completed_request_index) {
                         std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
                         auto message = in_transit_messages[completed_request_index].extract_message();
                         in_transit_messages[completed_request_index].emplace({comm_});
@@ -757,6 +762,7 @@ public:
     }
 
     bool probe_for_messages_persistent(MessageHandler<T, std::span<T>> auto&& on_message) {
+        kamping::measurements::timer().start("probe_receive");
         int outcount = 1;
         // std::vector<int> indices(receive_requests.size());
         // std::vector<MPI_Status> statuses(receive_requests.size());
@@ -790,6 +796,8 @@ public:
                 something_happenend = true;
                 local_message_count.receive++;
                 auto request_index = indices[i];
+		receive_requests_histogram[request_index]++;
+		// spdlog::info("finished receive in slot {}", request_index);
                 auto& status = statuses[i];
                 auto& buffer = receive_buffers[request_index];
                 MPI_Get_count(&status, kamping::mpi_datatype<T>(), &count);
@@ -800,6 +808,7 @@ public:
             }
             rounds++;
         }
+	kamping::measurements::timer().stop_and_add();
         return something_happenend;
     }
     bool probe_for_message_probing(MessageHandler<T, std::span<T>> auto&& on_message) {
@@ -894,10 +903,14 @@ public:
         last_poll_time = now;
       }
       // bool something_happenend = false;
+      kamping::measurements::timer().start("probe_receive");
+      bool probe_finished_somehting =
+	probe_for_messages(std::forward<decltype(on_message)>(on_message));
+      kamping::measurements::timer().stop_and_add();
+      kamping::measurements::timer().start("progress_sending");
       bool send_finished_something = progress_sending(
           std::forward<decltype(on_finished_sending)>(on_finished_sending));
-      bool probe_finished_somehting =
-          probe_for_messages(std::forward<decltype(on_message)>(on_message));
+      kamping::measurements::timer().stop_and_add();
       if (send_finished_something || probe_finished_somehting) {
         return std::pair{send_finished_something, probe_finished_somehting};
       }
@@ -1067,6 +1080,7 @@ private:
     size_t reserved_receive_buffer_size_;
     std::vector<ReceiveBufferContainer> receive_buffers;
     std::vector<MPI_Request> receive_requests;
+    std::vector<int> receive_requests_histogram;
     std::vector<int> indices;
     std::vector<MPI_Status> statuses;
     internal::MessageCounter local_message_count = {0, 0};
