@@ -32,10 +32,10 @@ std::optional<std::pair<int, MPI_Request*>> internal::RequestPool::get_some_inac
     }
 
     if (hint < 0) {
-      spdlog::info("last_slot={}", last_slot);
+      // spdlog::info("last_slot={}", last_slot);
       hint = last_slot;
     } else {
-      spdlog::info("hint={}", hint);
+      // spdlog::info("hint={}", hint);
     }
 
     // first check the hinted position

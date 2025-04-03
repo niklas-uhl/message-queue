@@ -71,23 +71,43 @@ public:
         }
     }
 
+  int round_robin_index = 0;
+
     template <typename CompletionFunction>
     void test_any(CompletionFunction&& on_complete = [](int) {}) {
         int flag = 0;
         int index = 0;
         max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
-        MPI_Testany(active_range.second - active_range.first,  // count
-                    requests.data() + active_range.first,      // requests
+        MPI_Testany(capacity() - round_robin_index,
+		    // active_range.second - active_range.first,  // count
+                    requests.data() + round_robin_index,      // requests
                     &index,                                    // index
                     &flag,                                     // flag
                     MPI_STATUS_IGNORE                          // status
         );
         if (flag && index != MPI_UNDEFINED) {
-            index += active_range.first;
+            index += round_robin_index;
             remove_from_active_range(index);
             track_max_active_requests();
             on_complete(index);
-        }
+        } else {
+	  MPI_Testany(round_robin_index,
+		      requests.data(),
+		      &index,
+		      &flag,
+		      MPI_STATUS_IGNORE
+		      );
+	  if (flag && index != MPI_UNDEFINED) {
+            // index += round_robin_index;
+            remove_from_active_range(index);
+            track_max_active_requests();
+            on_complete(index);
+	  }
+	}
+	round_robin_index++;
+	if (round_robin_index == capacity()) {
+	  round_robin_index = 0;
+	}
     }
 
     /// my request functions {{{
@@ -148,7 +168,7 @@ public:
         return max_active_requests_;
     }
     ~RequestPool() {
-      spdlog::info("max_active_requests={}, request_histogram = {}", max_active_requests(), histogram);
+      // spdlog::info("max_active_requests={}, request_histogram = {}", max_active_requests(), histogram);
     }
 
 private:
@@ -157,7 +177,7 @@ private:
     }
 
   void add_to_active_range(int index) {
-        spdlog::info("add to range {}", index);
+        // spdlog::info("add to range {}", index);
         histogram[index]++;
         active_requests_++;
         active_range.first = std::min(index, active_range.first);
@@ -165,8 +185,8 @@ private:
     }
 
   void remove_from_active_range(int index) {
-    spdlog::info("remove from range {}", index);
-    last_slot = index;
+    // spdlog::info("remove from range {}", index);
+        last_slot = index;
         active_requests_--;
         if (index == active_range.first) {
             active_range.first++;
