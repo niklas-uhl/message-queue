@@ -59,6 +59,7 @@ std::optional<std::pair<int, MPI_Request*>> internal::RequestPool::get_some_inac
             if (requests[i] == MPI_REQUEST_NULL) {
                 add_to_active_range(i);
                 track_max_active_requests();
+		spdlog::info("Found slot at {}", i);
                 return {{i, &requests[i]}};
             }
         }
@@ -68,6 +69,7 @@ std::optional<std::pair<int, MPI_Request*>> internal::RequestPool::get_some_inac
         if (requests[i] == MPI_REQUEST_NULL) {
             add_to_active_range(i);
             track_max_active_requests();
+            spdlog::info("Found slot at {}", i);
             return {{i, &requests[i]}};
         }
     }
@@ -76,6 +78,7 @@ std::optional<std::pair<int, MPI_Request*>> internal::RequestPool::get_some_inac
         if (requests[i] == MPI_REQUEST_NULL) {
             add_to_active_range(i);
             track_max_active_requests();
+            spdlog::info("Found slot at {}", i);
             return {{i, &requests[i]}};
         }
     }
