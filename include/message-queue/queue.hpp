@@ -413,6 +413,7 @@ class MessageQueue {
         if (outgoing_message_box.empty()) {
             return false;
         }
+        throw std::runtime_error("This should not happen");
         internal::handles::SendHandle<T, MessageContainer>& message_to_send = outgoing_message_box.front();
         if (auto returned_handle = try_send_something(hint, std::move(message_to_send))) {
             message_to_send = std::move(*returned_handle);

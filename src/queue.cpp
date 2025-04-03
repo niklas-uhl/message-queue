@@ -44,6 +44,9 @@ std::optional<std::pair<int, MPI_Request*>> internal::RequestPool::get_some_inac
         track_max_active_requests();
         return {{hint, &requests[hint]}};
     }
+    if (hint >= 0) {
+      spdlog::info("Hint not used");
+    }
 
     // first try to find a request in the active range if there is one
     if (active_requests_ < active_range.second - active_range.first) {

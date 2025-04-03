@@ -8,13 +8,13 @@ include(cmake/dependencies.cmake)
 find_package(MPI REQUIRED)
 
 include(cmake/setup_assertion_level.cmake)
-FetchContent_MakeAvailable(kassert kamping)
+FetchContent_MakeAvailable(kassert kamping fmt spdlog)
 
 try_compile(
   MESSAGE_QUEUE_HAS_LAZY_SPLIT_VIEW
   ${CMAKE_CURRENT_BINARY_DIR}
   SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/compile_check.cpp
-  CXX_STANDARD 23
+  CXX_STANDARD 20
 )
 
 set(message_queue_source_files

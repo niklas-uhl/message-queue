@@ -1,8 +1,10 @@
-  CompileFlags:
-    Add: [-std=c++20]
-    Remove: [-fconcepts-diagnostics-depth=*]
-  InlayHints:
-    Designators: Yes
-    Enabled: Yes
-    ParameterNames: Yes
-    DeducedTypes: Yes
+# -*- mode: yaml; -*-
+CompileFlags:
+  Add: [-std=c++20]
+  Remove: [-fconcepts-diagnostics-depth=*]
+  CompilationDatabase: 'build-ninja/'
+InlayHints:
+  Designators: Yes
+  Enabled: Yes
+  ParameterNames: Yes
+  DeducedTypes: Yes
