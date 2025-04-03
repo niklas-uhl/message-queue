@@ -70,7 +70,10 @@ public:
           available_in_transit_slots_(in_transit_buffers_.size()),
           merge(std::move(merger)),
           split(std::move(splitter)),
-          pre_send_cleanup(std::move(cleaner)) {}
+          pre_send_cleanup(std::move(cleaner)) {
+    }
+  ~BufferedMessageQueue() {
+  }
 
     // BufferedMessageQueue(MPI_Comm comm = MPI_COMM_WORLD,
     //                      Merger merger = Merger{},
@@ -211,6 +214,7 @@ public:
               if (buf.has_value()) {
                 return std::move(*buf);
               }
+	      // throw std::runtime_error("This should not happen");
               // KASSERT(false);
               // spdlog::debug("Polling");
               poll(std::forward<decltype(on_message)>(on_message));

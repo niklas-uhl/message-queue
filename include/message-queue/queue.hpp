@@ -35,6 +35,7 @@
 #include "message-queue/concepts.hpp"
 #include "message-queue/debug_print.hpp"
 
+
 #include <spdlog/spdlog.h>
 
 namespace message_queue {
@@ -73,40 +74,41 @@ public:
   int round_robin_index = 0;
 
     template <typename CompletionFunction>
-    void test_any(CompletionFunction&& on_complete = [](int) {}) {
+    bool test_any(CompletionFunction&& on_complete = [](int) {}) {
         int flag = 0;
         int index = 0;
         max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
-        MPI_Testany(capacity() - round_robin_index,
+        MPI_Testany(capacity(), // - round_robin_index,
 		    // active_range.second - active_range.first,  // count
-                    requests.data() + round_robin_index,      // requests
+                    requests.data(), // + round_robin_index,      // requests
                     &index,                                    // index
                     &flag,                                     // flag
                     MPI_STATUS_IGNORE                          // status
         );
         if (flag && index != MPI_UNDEFINED) {
-            index += round_robin_index;
+	  //index += round_robin_index;
             remove_from_active_range(index);
             track_max_active_requests();
             on_complete(index);
-        } else {
-	  MPI_Testany(round_robin_index,
-		      requests.data(),
-		      &index,
-		      &flag,
-		      MPI_STATUS_IGNORE
-		      );
-	  if (flag && index != MPI_UNDEFINED) {
-            // index += round_robin_index;
-            remove_from_active_range(index);
-            track_max_active_requests();
-            on_complete(index);
-	  }
-	}
-	round_robin_index++;
-	if (round_robin_index == capacity()) {
-	  round_robin_index = 0;
-	}
+        } // else {
+	//   MPI_Testany(round_robin_index,
+	// 	      requests.data(),
+	// 	      &index,
+	// 	      &flag,
+	// 	      MPI_STATUS_IGNORE
+	// 	      );
+	//   if (flag && index != MPI_UNDEFINED) {
+        //     // index += round_robin_index;
+        //     remove_from_active_range(index);
+        //     track_max_active_requests();
+        //     on_complete(index);
+	//   }
+	// }
+	// round_robin_index++;
+	// if (round_robin_index == capacity()) {
+	//   round_robin_index = 0;
+	// }
+	return static_cast<bool>(flag);
     }
 
     /// my request functions {{{
@@ -673,9 +675,9 @@ public:
         constexpr bool move_back_message = std::invocable<decltype(on_finished_sending), std::size_t, MessageContainer>;
         // check for finished sends and try starting new ones
         bool something_happenend = false;
-        if (request_pool.active_requests() == 0) {
-	    return true;
-	}
+        // if (request_pool.active_requests() == 0) {
+	//     return true;
+	// }
         if (!use_test_any_) {
             if (!use_custom_implementation_) {
                 request_pool.test_some([&](int completed_request_index) {
@@ -711,7 +713,7 @@ public:
             // while (progress) {
                 progress = false;
                 if (!use_custom_implementation_) {
-                    request_pool.test_any([&](int completed_request_index) {
+                    return request_pool.test_any([&](int completed_request_index) {
                         std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
                         auto message = in_transit_messages[completed_request_index].extract_message();
                         in_transit_messages[completed_request_index].emplace({comm_});
@@ -780,6 +782,7 @@ public:
                 something_happenend = true;
                 local_message_count.receive++;
                 auto request_index = indices[i];
+		// spdlog::info("finished receive in slot {}", request_index);
                 auto& status = statuses[i];
                 auto& buffer = receive_buffers[request_index];
                 MPI_Get_count(&status, kamping::mpi_datatype<T>(), &count);
@@ -884,10 +887,10 @@ public:
         last_poll_time = now;
       }
       // bool something_happenend = false;
+      bool probe_finished_somehting =
+	probe_for_messages(std::forward<decltype(on_message)>(on_message));
       bool send_finished_something = progress_sending(
           std::forward<decltype(on_finished_sending)>(on_finished_sending));
-      bool probe_finished_somehting =
-          probe_for_messages(std::forward<decltype(on_message)>(on_message));
       if (send_finished_something || probe_finished_somehting) {
         return std::pair{send_finished_something, probe_finished_somehting};
       }
