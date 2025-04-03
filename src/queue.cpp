@@ -32,22 +32,22 @@ std::optional<std::pair<int, MPI_Request*>> internal::RequestPool::get_some_inac
     }
 
     if (hint < 0) {
-      spdlog::info("using last_slot={} as hint", last_slot);
+      // spdlog::info("using last_slot={} as hint", last_slot);
       hint = last_slot;
     } else {
-      spdlog::info("explicit hint={}", hint);
+      // spdlog::info("explicit hint={}", hint);
     }
 
     // first check the hinted position
     if (hint >= 0 && hint < capacity() && requests[hint] == MPI_REQUEST_NULL) {
-        spdlog::info("successfully used hint {}", hint);
+        // spdlog::info("successfully used hint {}", hint);
         add_to_active_range(hint);
         track_max_active_requests();
         return {{hint, &requests[hint]}};
     }
     if (hint >= 0) {
       if (hint >= capacity()) {
-        spdlog::info("Hint {} not used, because invalid", hint);
+        // spdlog::info("Hint {} not used, because invalid", hint);
       } else {
 	spdlog::info("Hint {} not uses, because slot already had a request", hint);
       }

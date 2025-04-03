@@ -514,6 +514,9 @@ private:
             return buffer_it;
         }
         auto receipt = queue_.post_message(std::move(buffer_it->second), receiver);
+        if (!receipt.has_value()) {
+          throw std::runtime_error("posting should never fail");
+        }
         KASSERT(receipt.has_value());
         // posting the message should never fail, because we check for remaining capacity
         global_buffer_size_ -= pre_cleanup_buffer_size;
