@@ -45,7 +45,11 @@ std::optional<std::pair<int, MPI_Request*>> internal::RequestPool::get_some_inac
         return {{hint, &requests[hint]}};
     }
     if (hint >= 0) {
-      spdlog::info("Hint not used");
+      if (hint < capacity()) {
+        spdlog::info("Hint {} not used, because invalid", hint);
+      } else {
+	spdlog::info("Hint {} not uses, because slot already had a request", hint);
+      }
     }
 
     // first try to find a request in the active range if there is one
