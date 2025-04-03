@@ -31,6 +31,10 @@ std::optional<std::pair<int, MPI_Request*>> internal::RequestPool::get_some_inac
         return {};
     }
 
+    if (hint < 0) {
+      hint = last_slot;
+    }
+
     // first check the hinted position
     if (hint >= 0 && hint < capacity() && requests[hint] == MPI_REQUEST_NULL) {
         add_to_active_range(hint);
