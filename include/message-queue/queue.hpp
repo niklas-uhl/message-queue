@@ -191,6 +191,7 @@ private:
 
   void remove_from_active_range(int index) {
     // spdlog::info("remove from range {}", index);
+        // assert(!last_slot.has_value());
         last_slot = index;
         active_requests_--;
         if (index == active_range.first) {
@@ -204,7 +205,7 @@ private:
     std::vector<MPI_Request> requests;
     std::vector<int> indices;
     std::vector<int> histogram;
-    int last_slot = -1;
+    std::optional<int> last_slot;
     size_t inactive_request_pointer = 0;
     size_t active_requests_ = 0;
     std::pair<int, int> active_range = {0, 0};

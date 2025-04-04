@@ -33,7 +33,8 @@ std::optional<std::pair<int, MPI_Request*>> internal::RequestPool::get_some_inac
 
     if (hint < 0) {
       // spdlog::info("using last_slot={} as hint", last_slot);
-      hint = last_slot;
+      hint = last_slot.value_or(-1);
+      last_slot.reset();
     } else {
       // spdlog::info("explicit hint={}", hint);
     }
@@ -50,9 +51,14 @@ std::optional<std::pair<int, MPI_Request*>> internal::RequestPool::get_some_inac
         // spdlog::info("Hint {} not used, because invalid", hint);
       } else {
 	// spdlog::info("Hint {} not uses, because slot already had a request", hint);
-	// throw std::runtime_error("Hint not used, because slot already had a request");
+	throw std::runtime_error("Hint not used, because slot already had a request");
       }
     }
+    auto it = std::ranges::find(requests, MPI_REQUEST_NULL);
+    if (it == requests.end()) {
+      return std::nullopt;
+    }
+    return {{std::distance(requests.begin(), it), &*it}};
 
     // first try to find a request in the active range if there is one
     if (active_requests_ < active_range.second - active_range.first) {
