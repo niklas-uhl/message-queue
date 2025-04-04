@@ -47,7 +47,9 @@ size_t comm_size(MPI_Comm comm = MPI_COMM_WORLD);
 
 class RequestPool {
 public:
-  RequestPool(std::size_t capacity = 0) : requests(capacity, MPI_REQUEST_NULL), indices(capacity), histogram(capacity, 0) {}
+  RequestPool(std::size_t capacity = 0) : requests(capacity, MPI_REQUEST_NULL), indices(capacity), histogram(capacity, 0) {
+    // MPI_I
+    }
 
     std::optional<std::pair<int, MPI_Request*>> get_some_inactive_request(int hint = -1);
 
@@ -664,6 +666,7 @@ public:
             local_message_count.send++;
             return receipt;
         }
+        throw std::runtime_error("There should always be empty slots");
         // try appending to the message box
         try_send_something_from_message_box();  // ensure that we don't "waste" an empty slot
         if (outgoing_message_box.size() >= message_box_capacity_) {
@@ -738,7 +741,8 @@ public:
                         } else {
                             on_finished_sending(request_id);
                         }
-                        try_send_something_from_message_box(completed_request_index);
+			// spdlog::info("try_send_something_from_message_box({})", completed_request_index);
+                        // try_send_something_from_message_box(completed_request_index);
                     });
                 } else {
                     request_pool.my_test_any([&](int completed_request_index) {
