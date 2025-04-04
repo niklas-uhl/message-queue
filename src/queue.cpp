@@ -32,7 +32,8 @@ std::optional<std::pair<int, MPI_Request*>> internal::RequestPool::get_some_inac
     }
 
     if (hint < 0) {
-      hint = last_slot;
+      hint = last_slot.value_or(-1);
+      last_slot.reset();
     }
 
     // first check the hinted position
@@ -41,6 +42,11 @@ std::optional<std::pair<int, MPI_Request*>> internal::RequestPool::get_some_inac
         track_max_active_requests();
         return {{hint, &requests[hint]}};
     }
+    auto it = std::ranges::find(requests, MPI_REQUEST_NULL);
+    if (it == requests.end()) {
+      return std::nullopt;
+    }
+    return {{std::distance(requests.begin(), it), &*it}};
 
     // first try to find a request in the active range if there is one
     if (active_requests_ < active_range.second - active_range.first) {

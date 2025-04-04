@@ -193,6 +193,7 @@ private:
     }
     std::vector<MPI_Request> requests;
     std::vector<int> indices;
+    std::optional<int> last_slot;
     size_t inactive_request_pointer = 0;
     size_t active_requests_ = 0;
     std::pair<int, int> active_range = {0, 0};
