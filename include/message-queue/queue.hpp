@@ -622,6 +622,7 @@ public:
         // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));
         // assert(receiver != rank_);
         if (message.size() == 0) {
+	    std::runtime_error("empty messages should not happen");
             return std::nullopt;
         }
         internal::handles::SendHandle<T, MessageContainer> handle(comm_);
@@ -641,9 +642,10 @@ public:
 
         if (outgoing_message_box.empty() && empty_send_slots() > 0) {
             // we can try to send directly
-            auto returned_handle = try_send_something(-1, std::move(handle));
+  	    auto returned_handle = try_send_something(-1, std::move(handle));
             if (returned_handle.has_value()) {
                 // no slots available
+	      throw std::runtime_error("We just checked for an empty slot");
                 return std::nullopt;
             }  // succeeded
             auto receipt = std::optional{this->request_id_};
@@ -679,74 +681,44 @@ public:
         // if (request_pool.active_requests() == 0) {
 	//     return true;
 	// }
-        if (!use_test_any_) {
-            if (!use_custom_implementation_) {
-                request_pool.test_some([&](int completed_request_index) {
-                    std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
-                    auto message = in_transit_messages[completed_request_index].extract_message();
-                    buffer_owned_by_queue_--;
-		    // spdlog::debug("buffers_owned_by_queue={}", buffer_owned_by_queue_);
-                    in_transit_messages[completed_request_index].emplace({comm_});
-                    something_happenend = true;
-                    if constexpr (move_back_message) {
-                        on_finished_sending(request_id, std::move(message));
-                    } else {
-                        on_finished_sending(request_id);
-                    }
-                    try_send_something_from_message_box(completed_request_index);
-                });
-            } else {
-                request_pool.my_test_some([&](int completed_request_index) {
-                    std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
-                    auto message = in_transit_messages[completed_request_index].extract_message();
-                    in_transit_messages[completed_request_index].emplace({comm_});
-                    something_happenend = true;
-                    if constexpr (move_back_message) {
-                        on_finished_sending(request_id, std::move(message));
-                    } else {
-                        on_finished_sending(request_id);
-                    }
-                    try_send_something_from_message_box(completed_request_index);
-                });
-            }
-        } else {
-            bool progress = true;
-            // while (progress) {
-                progress = false;
-                if (!use_custom_implementation_) {
-                    return request_pool.test_any([&](int completed_request_index) {
-                        std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
-                        auto message = in_transit_messages[completed_request_index].extract_message();
-                        in_transit_messages[completed_request_index].emplace({comm_});
-                        something_happenend = true;
-                        progress = true;
-                        if constexpr (move_back_message) {
-                            on_finished_sending(request_id, std::move(message));
-                        } else {
-                            on_finished_sending(request_id);
-                        }
-                        try_send_something_from_message_box(completed_request_index);
-                    });
-                } else {
-                    request_pool.my_test_any([&](int completed_request_index) {
-                        std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
-                        auto message = in_transit_messages[completed_request_index].extract_message();
-                        in_transit_messages[completed_request_index].emplace({comm_});
-                        something_happenend = true;
-                        progress = true;
-                        if constexpr (move_back_message) {
-                            on_finished_sending(request_id, std::move(message));
-                        } else {
-                            on_finished_sending(request_id);
-                        }
-                        try_send_something_from_message_box(completed_request_index);
-                    });
-                }
-            // }
-        }
-        while (try_send_something_from_message_box()) {
-        }
-        return something_happenend;
+	bool progress = true;
+	// while (progress) {
+	progress = false;
+	// if (!use_custom_implementation_) {
+	return request_pool.test_any([&](int completed_request_index) {
+	  std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
+	  auto message = in_transit_messages[completed_request_index].extract_message();
+	  in_transit_messages[completed_request_index].emplace({comm_});
+	  something_happenend = true;
+	  progress = true;
+	  if constexpr (move_back_message) {
+	    on_finished_sending(request_id, std::move(message));
+	  } else {
+	    on_finished_sending(request_id);
+	  }
+	  // spdlog::info("try_send_something_from_message_box({})", completed_request_index);
+	  // try_send_something_from_message_box(completed_request_index);
+	});
+        //         } else {
+        //             request_pool.my_test_any([&](int completed_request_index) {
+        //                 std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
+        //                 auto message = in_transit_messages[completed_request_index].extract_message();
+        //                 in_transit_messages[completed_request_index].emplace({comm_});
+        //                 something_happenend = true;
+        //                 progress = true;
+        //                 if constexpr (move_back_message) {
+        //                     on_finished_sending(request_id, std::move(message));
+        //                 } else {
+        //                     on_finished_sending(request_id);
+        //                 }
+        //                 try_send_something_from_message_box(completed_request_index);
+        //             });
+        //         }
+        //     // }
+        // }
+        // while (try_send_something_from_message_box()) {
+        // }
+        // return something_happenend;
     }
 
     bool probe_for_messages_persistent(MessageHandler<T, std::span<T>> auto&& on_message) {
@@ -756,12 +728,12 @@ public:
         int count = 0;
         bool something_happenend = false;
         size_t rounds = 0;
-        while (outcount > 0 && rounds < max_probe_rounds_) {
-            if (!use_test_any_) {
-                // if here no active handles, return flag=true, index=MPI_UNDEFINED
-                MPI_Testsome(static_cast<int>(receive_requests.size()), receive_requests.data(), &outcount,
-                             indices.data(), statuses.data());
-            } else {
+        // while (outcount > 0 && rounds < max_probe_rounds_) {
+            // if (!use_test_any_) {
+            //     // if here no active handles, return flag=true, index=MPI_UNDEFINED
+            //     MPI_Testsome(static_cast<int>(receive_requests.size()), receive_requests.data(), &outcount,
+            //                  indices.data(), statuses.data());
+            // } else {
                 int flag = 0;
                 int err = MPI_Testany(static_cast<int>(receive_requests.size()), receive_requests.data(), &indices[0], &flag,
 				      &statuses[0]);
@@ -774,7 +746,7 @@ public:
                 } else {
                   outcount = 0;
                 }
-            }
+            // }
             // std::cout << "outcount=" << outcount << "\n";
             if (outcount == MPI_UNDEFINED) {
               throw std::runtime_error("This should not happen, because we always have pending requests");
@@ -788,12 +760,14 @@ public:
                 auto& buffer = receive_buffers[request_index];
                 MPI_Get_count(&status, kamping::mpi_datatype<T>(), &count);
                 auto message = std::span(buffer).first(count);
+
                 on_message(
                     MessageEnvelope<decltype(message)>{std::move(message), status.MPI_SOURCE, rank_, status.MPI_TAG});
+
                 restart_receive(request_index);
             }
             rounds++;
-        }
+        // }
         return something_happenend;
     }
     bool probe_for_message_probing(MessageHandler<T, std::span<T>> auto&& on_message) {

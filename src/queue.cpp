@@ -28,6 +28,7 @@ size_t internal::comm_size(MPI_Comm comm) {
 
 std::optional<std::pair<int, MPI_Request*>> internal::RequestPool::get_some_inactive_request(int hint) {
     if (inactive_requests() == 0) {
+      throw std::runtime_error("all slots are full");
         return {};
     }
 
@@ -44,6 +45,7 @@ std::optional<std::pair<int, MPI_Request*>> internal::RequestPool::get_some_inac
     }
     auto it = std::ranges::find(requests, MPI_REQUEST_NULL);
     if (it == requests.end()) {
+      throw std::runtime_error("find(requests) failed");
       return std::nullopt;
     }
     return {{std::distance(requests.begin(), it), &*it}};

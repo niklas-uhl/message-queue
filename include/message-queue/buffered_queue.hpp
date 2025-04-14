@@ -206,6 +206,7 @@ public:
               return;
               // break;
             }
+	    throw std::runtime_error("Failed to resolve overflow");
             // KASSERT(false);
           },
           [&] {
@@ -305,7 +306,12 @@ public:
       flush_all_buffers_impl(
           buffers_.end(),
           [&] { // pre_flush_hook
-            poll(std::forward<decltype(on_message)>(on_message));
+	    while(true) {
+	      auto res = poll(std::forward<decltype(on_message)>(on_message));
+	      if (res && res->first) {
+		break;
+	      }
+	    }
           },
           [&](bool current_flush_successful) { // post flush_hook
             // if (!current_flush_successful) {
@@ -323,12 +329,13 @@ public:
     /// Note: Message handlers take a MessageEnvelope as single argument. The
     /// Envelope (not necessarily the underlying data) is moved to the handler
     /// when called.
-    auto poll(MessageHandler<MessageType> auto &&on_message)
+  auto poll(MessageHandler<MessageType> auto &&on_message,
+	    std::chrono::duration<double> frequency = std::chrono::milliseconds(0))
         -> std::optional<std::pair<bool, bool>> {
       return queue_.poll(split_handler(on_message),
                          [&](std::size_t receipt, BufferContainer buffer) {
                            recover_buffer(receipt, std::move(buffer));
-                         });
+                         }, frequency);
     }
 
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
@@ -497,6 +504,7 @@ private:
         // available_in_transit_slots_--;
         // auto buf = std::ranges::ref_view{(*it)->second};
         if (queue_.total_remaining_capacity() == 0) {
+	    throw std::runtime_error("total remeining cap 0");
             return buffer_it;
         }
         auto receipt = queue_.post_message(std::move(buffer_it->second), receiver);
@@ -562,9 +570,9 @@ private:
 
     auto split_handler(MessageHandler<MessageType> auto&& on_message) {
         return [&](Envelope<BufferType> auto buffer) {
-            for (Envelope<MessageType> auto env : split(buffer.message, buffer.sender, queue_.rank())) {
-                on_message(std::move(env));
-            }
+	  for (Envelope<MessageType> auto env : split(buffer.message, buffer.sender, queue_.rank())) {
+	    on_message(std::move(env));
+	  }
         };
     }
 
