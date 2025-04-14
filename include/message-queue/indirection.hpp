@@ -25,6 +25,9 @@
 #include "message-queue/concepts.hpp"  // IWYU pragma: keep
 #include "message-queue/definitions.hpp"
 
+#include <kamping/measurements/timer.hpp>
+#include <spdlog/spdlog.h>
+
 namespace message_queue {
 template <typename T>
 concept IndirectionScheme = requires(T scheme, MPI_Comm comm, PEID sender, PEID receiver) {
@@ -206,14 +209,26 @@ private:
   auto redirection_handler(
       MessageHandler<typename queue_type::message_type> auto &&on_message) {
     return [&](Envelope<typename queue_type::message_type> auto envelope) {
-      if (indirection_.should_redirect(envelope.sender, envelope.receiver)) {
+      //kamping::measurements::timer().start("handler");
+      //kamping::measurements::timer().start("check_redirect");
+      bool should_redirect = indirection_.should_redirect(envelope.sender, envelope.receiver);
+      //kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
+      //kamping::measurements::timer().start("handler_inner");
+      if (should_redirect) {
+	spdlog::warn("not expected to redirect anything");
         post_message_blocking(std::move(envelope.message), envelope.receiver,
                               envelope.sender, envelope.receiver, envelope.tag,
                               std::forward<decltype(on_message)>(on_message));
       } else {
+	// kamping::measurements::timer().start("kassert");
         KASSERT(envelope.receiver == this->rank());
+	//kamping::measurements::timer().stop_and_add();
+	//kamping::measurements::timer().start("ind_on_message");
         on_message(std::move(envelope));
+	//kamping::measurements::timer().stop_and_add();
       }
+      //kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
+      //kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
     };
   }
   Indirector indirection_;

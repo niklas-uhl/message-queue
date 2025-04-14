@@ -64,6 +64,7 @@ template <MessageRange MessageRangeType>
 struct MessageEnvelope {
     explicit MessageEnvelope(MessageRangeType message, PEID sender, PEID receiver, int tag)
         : message(std::move(message)), sender(sender), receiver(receiver), tag(tag) {}
+    MessageEnvelope() = default;
     // MessageEnvelope(MessageEnvelope const&) = delete;
     // MessageEnvelope(MessageEnvelope&&) = default;
     // MessageEnvelope& operator=(MessageEnvelope const&) = delete;

@@ -37,6 +37,9 @@
 
 #include <spdlog/spdlog.h>
 
+template<typename>
+struct TD;
+
 namespace message_queue {
 
 enum class FlushStrategy { local, global, random, largest };
@@ -73,12 +76,14 @@ public:
           merge(std::move(merger)),
           split(std::move(splitter)),
           pre_send_cleanup(std::move(cleaner)) {
-      spdlog::info("message_size = {}", sizeof(buffer_type));
+      // spdlog::info("message_size = {}", sizeof(buffer_type));
     }
   ~BufferedMessageQueue() {
+    if (poll_pre_overflow > 0) {
     spdlog::info("poll_pre_overflow = {}, overflows = {}, avg = {}", poll_pre_overflow, overflows,
 		 overflows > 0 ? poll_pre_overflow / overflows : 0
 		 );
+    }
   }
 
     // BufferedMessageQueue(MPI_Comm comm = MPI_COMM_WORLD,
@@ -206,20 +211,27 @@ public:
           envelope_receiver, tag,
 				    [&](auto it) {
 				      overflows++;
-            timer().start("poll_pre_overflow");
+				      // timer().start("poll_pre_overflow");
+	    int polls = 0;
             while (true) {
+	      using namespace std::chrono_literals;
+
 	      poll_pre_overflow++;
-              auto res = poll(std::forward<decltype(on_message)>(on_message));
+              auto res = [&] -> std::optional<std::pair<bool, bool>> {
+		polls++;
+		return poll(std::forward<decltype(on_message)>(on_message));
+	      }();
               if (res && res->first) { // finished some send
                 break;
               }
             }
-	    timer().stop_and_add();
+	    // timer().stop_and_add();
             bool success = resolve_overflow(it);
             if (success) {
               return;
               // break;
             }
+	    throw std::runtime_error("Failed to resolve overflow");
             // KASSERT(false);
           },
           [&] {
@@ -319,7 +331,12 @@ public:
       flush_all_buffers_impl(
           buffers_.end(),
           [&] { // pre_flush_hook
-            poll(std::forward<decltype(on_message)>(on_message));
+	    while(true) {
+	      auto res = poll(std::forward<decltype(on_message)>(on_message));
+	      if (res && res->first) {
+		break;
+	      }
+	    }
           },
           [&](bool current_flush_successful) { // post flush_hook
             // if (!current_flush_successful) {
@@ -337,12 +354,13 @@ public:
     /// Note: Message handlers take a MessageEnvelope as single argument. The
     /// Envelope (not necessarily the underlying data) is moved to the handler
     /// when called.
-    auto poll(MessageHandler<MessageType> auto &&on_message)
+  auto poll(MessageHandler<MessageType> auto &&on_message,
+	    std::chrono::duration<double> frequency = std::chrono::milliseconds(0))
         -> std::optional<std::pair<bool, bool>> {
       return queue_.poll(split_handler(on_message),
                          [&](std::size_t receipt, BufferContainer buffer) {
                            recover_buffer(receipt, std::move(buffer));
-                         });
+                         }, frequency);
     }
 
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
@@ -511,6 +529,7 @@ private:
         // available_in_transit_slots_--;
         // auto buf = std::ranges::ref_view{(*it)->second};
         if (queue_.total_remaining_capacity() == 0) {
+	    throw std::runtime_error("total remeining cap 0");
             return buffer_it;
         }
         auto receipt = queue_.post_message(std::move(buffer_it->second), receiver);
@@ -576,9 +595,30 @@ private:
 
     auto split_handler(MessageHandler<MessageType> auto&& on_message) {
         return [&](Envelope<BufferType> auto buffer) {
-            for (Envelope<MessageType> auto env : split(buffer.message, buffer.sender, queue_.rank())) {
-                on_message(std::move(env));
-            }
+	  // kamping::measurements::timer().disable();
+	  kamping::measurements::timer().start("split");
+	  auto r = split(buffer.message, buffer.sender, queue_.rank());
+	  // TD<decltype(r)> {};
+	  auto current = r.begin();
+	  // kamping::measurements::timer().start("dereference");
+	  // kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
+	  // kamping::measurements::timer().start("on_message");
+	  // kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
+	  // kamping::measurements::timer().start("increment");
+	  // kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather}); 
+	  for (;current!=r.end();) {
+	      // kamping::measurements::timer().start("dereference");
+	      Envelope<MessageType> auto env = *current;
+	      // kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
+	      // kamping::measurements::timer().start("on_message");
+	      on_message(std::move(env));
+	      // kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
+	      // kamping::measurements::timer().start("increment");
+	      current++;
+	      // kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
+	  }
+	  kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
+	  // kamping::measurements::timer().enable();
         };
     }
 
