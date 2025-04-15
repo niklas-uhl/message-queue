@@ -597,6 +597,7 @@ private:
         return [&](Envelope<BufferType> auto buffer) {
 	  // kamping::measurements::timer().disable();
 	  kamping::measurements::timer().start("split");
+	  // MPI_Pcontrol(1);
 	  auto r = split(buffer.message, buffer.sender, queue_.rank());
 	  // TD<decltype(r)> {};
 	  auto current = r.begin();
@@ -617,7 +618,8 @@ private:
 	      current++;
 	      // kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
 	  }
-	  kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
+	  // MPI_Pcontrol(0);
+	  kamping::measurements::timer().stop_and_add();
 	  // kamping::measurements::timer().enable();
         };
     }
