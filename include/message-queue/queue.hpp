@@ -854,8 +854,8 @@ public:
          SendFinishedCallback<MessageContainer> auto &&on_finished_sending,
          std::chrono::duration<double> frequency = std::chrono::milliseconds(0))
         -> std::optional<std::pair<bool, bool>> {
-      auto now = std::chrono::high_resolution_clock::now();
       if (frequency.count() > 0) {
+	auto now = std::chrono::high_resolution_clock::now();
         if (now - last_poll_time < frequency) {
           return std::nullopt;
         }
