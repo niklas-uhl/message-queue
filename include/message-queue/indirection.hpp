@@ -38,7 +38,10 @@ concept IndirectionScheme = requires(T scheme, MPI_Comm comm, PEID sender, PEID 
 
 class GridIndirectionScheme {
 public:
-    GridIndirectionScheme(MPI_Comm comm) : comm_(comm), grid_size_(std::round(std::sqrt(size()))) {}
+  GridIndirectionScheme(MPI_Comm comm) : comm_(comm), grid_size_(std::round(std::sqrt(size()))) {
+    MPI_Comm_rank(comm_, &my_rank_);
+    MPI_Comm_size(comm_, &my_size_);
+    }
 
     PEID next_hop(PEID sender, PEID receiver) const {
         auto proxy = get_proxy(rank(), receiver);
@@ -57,14 +60,10 @@ public:
 
 private:
     int rank() const {
-        int my_rank;
-        MPI_Comm_rank(comm_, &my_rank);
-        return my_rank;
+        return my_rank_;
     }
     int size() const {
-        int my_size;
-        MPI_Comm_size(comm_, &my_size);
-        return my_size;
+        return my_size_;
     }
     struct GridPosition {
         int row;
@@ -96,6 +95,8 @@ private:
     }
     MPI_Comm comm_;
     PEID grid_size_;
+    int my_rank_;
+    int my_size_;
 };
 
 static_assert(IndirectionScheme<GridIndirectionScheme>);
