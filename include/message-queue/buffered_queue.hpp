@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <ranges>
 #include <unordered_map>
 #include <vector>
@@ -36,6 +37,47 @@
 #include <spdlog/spdlog.h>
 
 namespace message_queue {
+
+template <typename T>
+class FixedSizeBuffer {
+    std::unique_ptr<T[]> data_;
+    std::size_t size_;
+
+public:
+    FixedSizeBuffer() : data_(nullptr), size_(0) {}
+
+    [[nodiscard]] auto size() const -> std::size_t {
+        return size_;
+    }
+
+    void reserve(std::size_t size) {
+      data_ = std::unique_ptr<T[]>{new T[size]};
+    }
+
+    void resize(std::size_t size) {
+        size_ = size;
+    }
+
+    T* data() const {
+      return data_.get();
+    }
+
+    [[nodiscard]] auto empty() const -> bool {
+        return size() == 0;
+    }
+
+    void emplace_back(T&& val) {
+      data_[size_++] = std::move(val);
+    }
+
+    auto begin() const {
+        return data_.get();
+    }
+
+    auto end() const {
+        return begin() + size();
+    }
+};
 
 enum class FlushStrategy { local, global, random, largest };
 
@@ -176,9 +218,9 @@ public:
             buffer = get_new_buffer();
         }
         PEID rank = 0;
-        auto old_buffer_capacity = buffer.capacity();
+        // auto old_buffer_capacity = buffer.capacity();
         merge(buffer, receiver, queue_.rank(), std::move(envelope));
-        auto new_buffer_capacity = buffer.capacity();
+        // auto new_buffer_capacity = buffer.capacity();
         // if (old_buffer_capacity != new_buffer_capacity) {
         //     spdlog::debug("Merge changed buffer capacity from {} to {}", old_buffer_capacity, new_buffer_capacity);
         // }
@@ -589,9 +631,9 @@ private:
         // auto buf = std::move(*it).value();
         // available_in_transit_slots_++;
         // KASSERT(!it->has_value());
-        auto old_capacity = buffer.capacity();
+        // auto old_capacity = buffer.capacity();
         buffer.resize(0);  // this does not reduce the capacity
-        auto new_capacity = buffer.capacity();
+        // auto new_capacity = buffer.capacity();
         // if (old_capacity != new_capacity) {
         //     spdlog::debug("Changing buffer capacity from {} to {}", old_capacity, new_capacity);
         // }
