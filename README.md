@@ -1,4 +1,4 @@
-# 📬 message-queue
+# 📬 BriefKAsten
 
 Asynchronous (buffering) MPI message queue implementation 📬
 
