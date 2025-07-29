@@ -508,16 +508,39 @@ class MessageQueue {
         }
     }
 
+    // void cleanup_receives(MessageHandler<T, std::span<T>> auot&& on_message) {
+    //     for (MPI_Request& req : receive_requests) {
+    //         assert(req != MPI_REQUEST_NULL)
+    //             // if (req != MPI_REQUEST_NULL) {
+    //             MPI_Cancel(&req);
+    //         // }
+    //     }
+    //     MPI_Waitall(static_cast<int>(receive_requests.size()), receive_requests.data(), statuses.data());
+    //     for (auto& [req, buf, status] : std::views::zip(receive_requests, receive_buffers, statuses)) {
+    //         int cancelled = false;
+    //         MPI_Test_cancelled(&status, &cancelled);
+    //         if (!cancelled) {
+    // 	        local_message_count.receive++;
+    //             int count = 0;
+    //             MPI_Get_count(&status, kamping::mpi_datatype<T>(), &count);
+    //             auto message = std::span(buffer).first(count);
+    //             on_message(
+    //                 MessageEnvelope<decltype(message)>{std::move(message), status.MPI_SOURCE, rank_, status.MPI_TAG});
+    //         }
+    //         MPI_Requests_free(&req);
+    //     }
+    // }
+
 public:
     MessageQueue(MPI_Comm comm, size_t num_request_slots, size_t reserved_receive_buffer_size, ReceiveMode receive_mode)
         : outgoing_message_box(),
           request_pool(num_request_slots),
           in_transit_messages(num_request_slots),
           messages_to_receive(),
-          reserved_receive_buffer_size_(reserved_receive_buffer_size),
+          reserved_receive_buffer_size_(reserved_receive_buffer_size == std::numeric_limits<size_t>::max() ? 0 : reserved_receive_buffer_size),
           receive_buffers(num_request_slots),
           receive_requests(num_request_slots, MPI_REQUEST_NULL),
-	  receive_requests_histogram(num_request_slots, 0),
+          receive_requests_histogram(num_request_slots, 0),
           indices(num_request_slots),
           statuses(num_request_slots),
           request_id_(0),
@@ -1005,7 +1028,7 @@ public:
 	      poll(std::forward<decltype(on_message)>(on_message), std::forward<decltype(on_finished_sending)>(on_finished_sending));
 	      progress_hook();
 	      if (termination_state_ == TerminationState::active) {
-		spdlog::warn("Terminate cancelled");
+		// spdlog::warn("Terminate cancelled");
 		return false;
 	      }
             } while (!message_counting_finished());
