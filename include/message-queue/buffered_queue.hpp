@@ -81,6 +81,14 @@ public:
 
 enum class FlushStrategy { local, global, random, largest };
 
+struct Config {
+    size_t num_request_slots = 8;
+    ReceiveMode receive_mode = ReceiveMode::persistent;
+    FlushStrategy flush_strategy = FlushStrategy::global;
+    // size_t global_threshold_bytes = std::numeric_limits<size_t>::max();
+    std::size_t local_threshold_bytes = std::numeric_limits<size_t>::max();
+};
+
 template <typename MessageType,
           MPIType BufferType = MessageType,
           MPIBuffer<BufferType> BufferContainer = std::vector<BufferType>,
@@ -114,8 +122,18 @@ public:
           split(std::move(splitter)),
           pre_send_cleanup(std::move(cleaner)) {
     }
-  ~BufferedMessageQueue() {
-  }
+
+    BufferedMessageQueue(MPI_Comm comm,
+                         Config const& config,
+                         Merger merger = Merger{},
+                         Splitter splitter = Splitter{},
+                         BufferCleaner cleaner = BufferCleaner{})
+        : queue_(comm, config.num_request_slots, config.local_threshold_bytes, config.receive_mode),
+          in_transit_buffers_(config.num_request_slots),
+          available_in_transit_slots_(in_transit_buffers_.size()),
+          merge(std::move(merger)),
+          split(std::move(splitter)),
+          pre_send_cleanup(std::move(cleaner)) {}
 
     // BufferedMessageQueue(MPI_Comm comm = MPI_COMM_WORLD,
     //                      Merger merger = Merger{},

@@ -48,7 +48,10 @@ std::optional<std::pair<int, MPI_Request*>> internal::RequestPool::get_some_inac
       throw std::runtime_error("find(requests) failed");
       return std::nullopt;
     }
-    return {{std::distance(requests.begin(), it), &*it}};
+    std::size_t i = std::distance(requests.begin(), it);
+    add_to_active_range(i);
+    track_max_active_requests();
+    return {{i, &*it}};
 
     // first try to find a request in the active range if there is one
     if (active_requests_ < active_range.second - active_range.first) {
