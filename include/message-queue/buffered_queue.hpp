@@ -36,6 +36,14 @@ namespace message_queue {
 
 enum class FlushStrategy { local, global, random, largest };
 
+struct Config {
+    size_t num_request_slots = 8;
+    ReceiveMode receive_mode = ReceiveMode::persistent;
+    FlushStrategy flush_strategy = FlushStrategy::global;
+    // size_t global_threshold_bytes = std::numeric_limits<size_t>::max();
+    std::size_t local_threshold_bytes = std::numeric_limits<size_t>::max();
+};
+
 template <typename MessageType,
           MPIType BufferType = MessageType,
           MPIBuffer<BufferType> BufferContainer = std::vector<BufferType>,
@@ -62,6 +70,18 @@ public:
                          Splitter splitter = Splitter{},
                          BufferCleaner cleaner = BufferCleaner{})
         : queue_(comm, num_request_slots, 32 * 1024 / sizeof(BufferType), receive_mode),
+          merge(std::move(merger)),
+          split(std::move(splitter)),
+          pre_send_cleanup(std::move(cleaner)) {
+      // spdlog::info("message_size = {}", sizeof(buffer_type));
+    }
+
+    BufferedMessageQueue(MPI_Comm comm,
+                         Config const& config,
+                         Merger merger = Merger{},
+                         Splitter splitter = Splitter{},
+                         BufferCleaner cleaner = BufferCleaner{})
+        : queue_(comm, config.num_request_slots, config.local_threshold_bytes, config.receive_mode),
           merge(std::move(merger)),
           split(std::move(splitter)),
           pre_send_cleanup(std::move(cleaner)) {}
