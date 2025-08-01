@@ -25,6 +25,7 @@
 #include <concepts>
 #include <cstddef>
 #include <deque>
+#include <kamping/environment.hpp>
 #include <kamping/mpi_datatype.hpp>
 #include <kassert/kassert.hpp>
 #include <limits>
@@ -54,7 +55,6 @@ template <MPIType T,
           MPIBuffer<T> MessageContainer = std::vector<T>,
           MPIBuffer<T> ReceiveBufferContainer = std::vector<T>>
 class MessageQueue {
-
     bool try_send_something_from_message_box(int hint = -1) {
         if (outgoing_message_box.empty()) {
             return false;
@@ -84,13 +84,6 @@ class MessageQueue {
         return std::move(message_to_send);
     }
 
-    static int comm_tag_ub(MPI_Comm comm) {
-        int flag;
-        int* tag_ub;
-        MPI_Comm_get_attr(MPI_COMM_WORLD, MPI_TAG_UB, &tag_ub, &flag);
-        return *tag_ub;
-    }
-
     void setup_receives() {
         for (size_t i = 0; i < receive_buffers.size(); i++) {
             auto& req = receive_requests[i];
@@ -104,7 +97,6 @@ class MessageQueue {
     void init_receive(size_t index) {
         switch (receive_mode_) {
             case ReceiveMode::poll:
-                return;
             case ReceiveMode::posted_receives:
                 return;
             case ReceiveMode::persistent:
@@ -182,9 +174,6 @@ public:
           indices(num_request_slots),
           statuses(num_request_slots),
           comm_(comm),
-          TAG_UB(comm_tag_ub(comm)),
-          LARGE_MESSAGE_TAG(TAG_UB - 1),
-          SMALL_MESSAGE_TAG(TAG_UB - 2),
           receive_mode_(receive_mode) {
         MPI_Comm_rank(comm_, &rank_);
         MPI_Comm_size(comm_, &size_);
@@ -219,15 +208,11 @@ public:
         this->comm_ = other.comm_;
         this->rank_ = other.rank_;
         this->size_ = other.size_;
-        this->TAG_UB = other.TAG_UB;
         this->LARGE_MESSAGE_TAG = other.LARGE_MESSAGE_TAG;
         this->SMALL_MESSAGE_TAG = other.SMALL_MESSAGE_TAG;
         this->receive_mode_ = other.receive_mode_;
         this->allow_large_messages_ = other.allow_large_messages_;
         this->termination_state_ = other.termination_state_;
-        this->number_of_waves = other.number_of_waves;
-        this->max_probe_rounds_ = other.max_probe_rounds_;
-        this->use_test_any_ = other.use_test_any_;
         return *this;
     }
     MessageQueue& operator=(MessageQueue const&) = delete;
@@ -315,7 +300,7 @@ public:
                     "This should always succeed since we checked for an empty slot before.");
             auto receipt = std::optional{this->request_id_};
             this->request_id_++;
-            local_message_count.send++;
+p            local_message_count.send++;
             return receipt;
         }
         // try appending to the message box
@@ -350,47 +335,32 @@ public:
             } else {
                 on_finished_sending(request_id);
             }
-	    try_send_something_from_message_box(completed_request_index);
+            try_send_something_from_message_box(completed_request_index);
         });
     }
 
     bool probe_for_messages_persistent(MessageHandler<T, std::span<T>> auto&& on_message) {
-        int outcount = 1;
-        // std::vector<int> indices(receive_requests.size());
-        // std::vector<MPI_Status> statuses(receive_requests.size());
-        int count = 0;
         bool something_happenend = false;
-        size_t rounds = 0;
-        // while (outcount > 0 && rounds < max_probe_rounds_) {
-        // if (!use_test_any_) {
-        //     // if here no active handles, return flag=true, index=MPI_UNDEFINED
-        //     MPI_Testsome(static_cast<int>(receive_requests.size()), receive_requests.data(), &outcount,
-        //                  indices.data(), statuses.data());
-        // } else {
-        int flag = 0;
-        int err = MPI_Testany(static_cast<int>(receive_requests.size()), receive_requests.data(), &indices[0], &flag,
-                              &statuses[0]);
-        if (flag) {
-            if (indices[0] == MPI_UNDEFINED) {
-                outcount = 0;
-            } else {
-                outcount = 1;
-            }
-        } else {
-            outcount = 0;
-        }
-        // }
-        // std::cout << "outcount=" << outcount << "\n";
-        if (outcount == MPI_UNDEFINED) {
-            throw std::runtime_error("This should not happen, because we always have pending requests");
-        }
-        for (int i = 0; i < outcount; i++) {
+        int request_completed = 0;
+        // Tests for completion of either one or none of the operations associated with active
+        // handles. In the former case, it returns flag = true, returns in index the index of this request
+        // in the array, and returns in status the status of that operation.
+        // In the latter case (no operation completed), it returns flag
+        // = false, returns a value of MPI_UNDEFINED in index and status is undefined.
+        // The array may contain null or inactive handles. If the array contains no active handles
+        // then the call returns immediately with flag = true, index = MPI_UNDEFINED, and an empty
+        // status.
+        int err = MPI_Testany(static_cast<int>(receive_requests.size()), receive_requests.data(), indices.data(),
+                              &request_completed, statuses.data());
+        if (request_completed) {
+            KASSERT(indices[0] != MPI_UNDEFINED,
+                    "This should not happen, because we always have pending receive requests.");
             something_happenend = true;
             local_message_count.receive++;
-            auto request_index = indices[i];
-            // spdlog::info("finished receive in slot {}", request_index);
-            auto& status = statuses[i];
+            auto request_index = indices[0];
+            auto& status = statuses[0];
             auto& buffer = receive_buffers[request_index];
+            int count = 0;
             MPI_Get_count(&status, kamping::mpi_datatype<T>(), &count);
             auto message = std::span(buffer).first(count);
 
@@ -399,11 +369,14 @@ public:
 
             restart_receive(request_index);
         }
-        rounds++;
-        // }
         return something_happenend;
     }
-    bool probe_for_message_probing(MessageHandler<T, std::span<T>> auto&& on_message) {
+
+    bool probe_for_message_probing(MessageHandler<T, std::span<T>> auto&& on_message,
+                                   std::size_t max_probe_rounds = 1) {
+        if (max_probe_rounds == 1) {
+            return probe_for_one_message(on_message, MPI_ANY_SOURCE, SMALL_MESSAGE_TAG);
+        }
         bool something_happenend = false;
 
         size_t num_recv_requests = 0;
@@ -413,7 +386,6 @@ public:
             for (size_t i = 0; i < messages_to_receive.size(); i++) {
                 auto& handle = messages_to_receive[i];
                 auto& buffer = receive_buffers[i];
-                // atomic_debug(fmt::format("received msg={} from {}", handle.message, handle.sender));
                 local_message_count.receive++;
                 auto message = std::span(buffer).first(handle.message_size());
                 on_message(MessageEnvelope{std::move(message), handle.sender(), rank_, handle.tag()});
@@ -424,8 +396,6 @@ public:
         while (auto probe_result = internal::handles::probe(comm_, MPI_ANY_SOURCE, SMALL_MESSAGE_TAG)) {
             something_happenend = true;
             auto recv_handle = probe_result->template handle<T, ReceiveBufferContainer>();
-            // atomic_debug(fmt::format("probed msg from {}", recv_handle.sender));
-            MPI_Request recv_req;
             recv_handle.set_request(&receive_requests[num_recv_requests]);
             recv_handle.start_receive_into(receive_buffers[num_recv_requests]);
             messages_to_receive.emplace_back(std::move(recv_handle));
@@ -435,7 +405,7 @@ public:
                 num_recv_requests = 0;
             }
             rounds++;
-            if (rounds >= max_probe_rounds_) {
+            if (rounds >= max_probe_rounds) {
                 break;
             }
         }
@@ -449,10 +419,14 @@ public:
         if (allow_large_messages_) {
             something_happened = probe_for_one_message(on_message, MPI_ANY_SOURCE, LARGE_MESSAGE_TAG);
         }
-        if (receive_mode_ == ReceiveMode::poll) {
-            something_happened |= probe_for_message_probing(on_message);
-        } else {
-            something_happened |= probe_for_messages_persistent(on_message);
+        switch (receive_mode_) {
+            case ReceiveMode::poll:
+                something_happened |= probe_for_message_probing(on_message);
+                break;
+            case ReceiveMode::posted_receives:
+            case ReceiveMode::persistent:
+                something_happened |= probe_for_messages_persistent(on_message);
+                break;
         }
         if (something_happened) {
             reactivate();
@@ -479,26 +453,14 @@ public:
         return poll(on_message, [](std::size_t) {});
     }
 
-    std::chrono::time_point<std::chrono::high_resolution_clock> last_poll_time =
-        std::chrono::high_resolution_clock::now();
-
     auto poll(MessageHandler<T, MessageContainer> auto&& on_message,
-              SendFinishedCallback<MessageContainer> auto&& on_finished_sending,
-              std::chrono::duration<double> frequency = std::chrono::milliseconds(0))
+              SendFinishedCallback<MessageContainer> auto&& on_finished_sending)
         -> std::optional<std::pair<bool, bool>> {
-        if (frequency.count() > 0) {
-            auto now = std::chrono::high_resolution_clock::now();
-            if (now - last_poll_time < frequency) {
-                return std::nullopt;
-            }
-            last_poll_time = now;
-        }
-        // bool something_happenend = false;
-        bool probe_finished_somehting = probe_for_messages(std::forward<decltype(on_message)>(on_message));
+        bool probe_finished_something = probe_for_messages(std::forward<decltype(on_message)>(on_message));
         bool send_finished_something =
             progress_sending(std::forward<decltype(on_finished_sending)>(on_finished_sending));
-        if (send_finished_something || probe_finished_somehting) {
-            return std::pair{send_finished_something, probe_finished_somehting};
+        if (send_finished_something || probe_finished_something) {
+            return std::pair{send_finished_something, probe_finished_something};
         }
         return std::nullopt;
     }
@@ -553,29 +515,19 @@ public:
     void start_message_counting() {
         if (termination_request == MPI_REQUEST_NULL) {
             message_count_reduce_buffer = local_message_count;
-            // atomic_debug(fmt::format("Start reduce with {}", message_count_reduce_buffer));
             MPI_Iallreduce(MPI_IN_PLACE, &message_count_reduce_buffer, 2, kamping::mpi_datatype<size_t>(), MPI_SUM,
                            comm_, &termination_request);
         }
     }
 
-    std::chrono::time_point<std::chrono::high_resolution_clock> last_termination_check_time =
-        std::chrono::high_resolution_clock::now();
 
-    bool message_counting_finished(std::chrono::duration<double> frequency = std::chrono::milliseconds(0)) {
+    bool message_counting_finished() {
         if (termination_request == MPI_REQUEST_NULL) {
             return true;
         }
-        if (frequency.count() > 0) {
-            auto now = std::chrono::high_resolution_clock::now();
-            if (now - last_termination_check_time < frequency) {
-                return false;
-            }
-            last_termination_check_time = now;
-        }
-        int reduce_finished = false;
+        int reduce_finished = 0;
         int err = MPI_Test(&termination_request, &reduce_finished, MPI_STATUS_IGNORE);
-        return reduce_finished;
+        return static_cast<bool>(reduce_finished);
     }
 
     [[nodiscard]] bool terminate(MessageHandler<T, MessageContainer> auto&& on_message,
@@ -603,8 +555,7 @@ public:
                      std::forward<decltype(on_finished_sending)>(on_finished_sending));
                 progress_hook();
                 if (termination_state_ == TerminationState::active) {
-                    // spdlog::warn("Terminate cancelled");
-                    return false;
+		  return false;
                 }
             } while (!message_counting_finished());
             if (check_termination_condition()) {
@@ -636,14 +587,6 @@ public:
         return request_pool.max_active_requests();
     }
 
-    void use_test_any(bool use_it = true) {
-        use_test_any_ = use_it;
-    }
-
-    void max_probe_rounds(size_t rounds) {
-        max_probe_rounds_ = rounds;
-    }
-
 private:
     std::deque<internal::handles::SendHandle<T, MessageContainer>> outgoing_message_box;
     std::size_t message_box_capacity_ = std::numeric_limits<size_t>::max();
@@ -655,25 +598,20 @@ private:
     std::vector<MPI_Request> receive_requests;
     std::vector<int> indices;
     std::vector<MPI_Status> statuses;
-    internal::MessageCounter local_message_count = {.send=0, .receive=0};
+    internal::MessageCounter local_message_count = {.send = 0, .receive = 0};
     internal::MessageCounter message_count_reduce_buffer;
-    internal::MessageCounter global_message_count = {.send=std::numeric_limits<size_t>::max(),
-                                                     .receive=std::numeric_limits<size_t>::max() - 1};
+    internal::MessageCounter global_message_count = {.send = std::numeric_limits<size_t>::max(),
+                                                     .receive = std::numeric_limits<size_t>::max() - 1};
     MPI_Request termination_request = MPI_REQUEST_NULL;
-    // MessageStatistics stats_;
     size_t request_id_ = 0;
     MPI_Comm comm_;
     PEID rank_ = 0;
     PEID size_ = 0;
-    int TAG_UB;
-    int LARGE_MESSAGE_TAG;
-    int SMALL_MESSAGE_TAG;
+    int LARGE_MESSAGE_TAG = kamping::Environment<>::tag_upper_bound() - 1;
+    int SMALL_MESSAGE_TAG = kamping::Environment<>::tag_upper_bound() - 2;
     ReceiveMode receive_mode_;
     bool allow_large_messages_ = false;
     TerminationState termination_state_ = TerminationState::active;
-    size_t number_of_waves = 0;
-    size_t max_probe_rounds_ = std::numeric_limits<size_t>::max();
-    bool use_test_any_ = false;
     bool synchronous_mode_ = false;
 };
 

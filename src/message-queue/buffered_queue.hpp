@@ -390,13 +390,10 @@ public:
     /// Note: Message handlers take a MessageEnvelope as single argument. The
     /// Envelope (not necessarily the underlying data) is moved to the handler
     /// when called.
-    auto poll(MessageHandler<MessageType> auto&& on_message,
-              std::chrono::duration<double> frequency = std::chrono::milliseconds(0))
-        -> std::optional<std::pair<bool, bool>> {
-        return queue_.poll(
-            split_handler(on_message),
-            [&](std::size_t receipt, BufferContainer buffer) { recover_buffer(receipt, std::move(buffer)); },
-            frequency);
+    auto poll(MessageHandler<MessageType> auto&& on_message) -> std::optional<std::pair<bool, bool>> {
+        return queue_.poll(split_handler(on_message), [&](std::size_t receipt, BufferContainer buffer) {
+            recover_buffer(receipt, std::move(buffer));
+        });
     }
 
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope

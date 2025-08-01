@@ -41,8 +41,6 @@ int main(int argc, char* argv[]) {
     app.add_option("--number_of_messages", number_of_messages, "The number of messages to send from each PE");
     std::size_t iterations = 1;
     app.add_option("--iterations", iterations);
-    bool use_test_any = false;
-    app.add_flag("--use_test_any", use_test_any);
     bool use_custom_implementations = false;
     app.add_flag("--use_custom_implementations", use_custom_implementations);
 
@@ -60,9 +58,6 @@ int main(int argc, char* argv[]) {
 
         auto queue = message_queue::MessageQueue<int, MessageContainer>{MPI_COMM_WORLD, 8, 100,
                                                                         message_queue::ReceiveMode::poll};
-        if (use_test_any) {
-            queue.use_test_any();
-        }
         std::default_random_engine eng;
         eng.seed(rank);
         std::bernoulli_distribution bernoulli_dist(0.1);
