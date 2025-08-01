@@ -15,4 +15,4 @@ CheckOptions:
   readability-identifier-length.IgnoredVariableNames: '^([Guv]|it)$'
   readability-identifier-length.IgnoredParameterNames: '^([Guv]|it)$'
   readability-function-cognitive-complexity.Threshold: 80
-  
+  misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic: True

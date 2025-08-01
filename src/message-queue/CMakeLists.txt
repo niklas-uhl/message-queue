@@ -3,7 +3,7 @@ target_sources(
   INTERFACE
   FILE_SET HEADERS
   aggregators.hpp
-  buffered_queue.hpp
+  buffered_queue.hppxo
   concepts.hpp
   definitions.hpp
   indirection.hpp

@@ -33,8 +33,8 @@
 #include <span>
 #include <utility>
 #include <vector>
-#include "./request_pool.hpp"
 #include "./message_handles.hpp"
+#include "./request_pool.hpp"
 #include "message-queue/concepts.hpp"
 
 namespace message_queue {
@@ -44,20 +44,16 @@ struct MessageCounter {
     size_t receive;
     auto operator<=>(const MessageCounter&) const = default;
 };
-
 }  // namespace internal
 
-enum class ReceiveMode { poll, posted_receives, persistent };
+enum class ReceiveMode : std::uint8_t { poll, posted_receives, persistent };
 
-enum class TerminationState { active, trying_termination, terminated };
+enum class TerminationState : std::uint8_t { active, trying_termination, terminated };
 
 template <MPIType T,
           MPIBuffer<T> MessageContainer = std::vector<T>,
           MPIBuffer<T> ReceiveBufferContainer = std::vector<T>>
 class MessageQueue {
-    enum class State { posted, initiated, completed };
-
-    std::size_t buffer_owned_by_queue_ = 0;
 
     bool try_send_something_from_message_box(int hint = -1) {
         if (outgoing_message_box.empty()) {
@@ -80,14 +76,9 @@ class MessageQueue {
 
             auto [index, req_ptr] = *result;
             message_to_send.set_request(req_ptr);
-            // atomic_debug(fmt::format("isend msg={}, to {}, using request {}", message_to_send.message,
-            // message_to_send.receiver, index));
             KASSERT(!in_transit_messages[index].message().has_value());
-            buffer_owned_by_queue_++;
-            // spdlog::debug("buffers_owned_by_queue={}", buffer_owned_by_queue_);
             in_transit_messages[index].swap(message_to_send);
             in_transit_messages[index].initiate_send();
-            // KASSERT(*message_to_send.request_ != MPI_REQUEST_NULL);
             return std::nullopt;
         }
         return std::move(message_to_send);
@@ -190,10 +181,7 @@ public:
           receive_requests(num_request_slots, MPI_REQUEST_NULL),
           indices(num_request_slots),
           statuses(num_request_slots),
-          request_id_(0),
           comm_(comm),
-          rank_(0),
-          size_(0),
           TAG_UB(comm_tag_ub(comm)),
           LARGE_MESSAGE_TAG(TAG_UB - 1),
           SMALL_MESSAGE_TAG(TAG_UB - 2),
@@ -240,7 +228,6 @@ public:
         this->number_of_waves = other.number_of_waves;
         this->max_probe_rounds_ = other.max_probe_rounds_;
         this->use_test_any_ = other.use_test_any_;
-        this->use_custom_implementation_ = other.use_custom_implementation_;
         return *this;
     }
     MessageQueue& operator=(MessageQueue const&) = delete;
@@ -257,7 +244,7 @@ public:
         }
     }
 
-    size_t reserved_receive_buffer_size() const {
+    [[nodiscard]] size_t reserved_receive_buffer_size() const {
         return reserved_receive_buffer_size_;
     }
 
@@ -288,7 +275,7 @@ public:
 
     [[nodiscard]] std::size_t remaining_message_box_capacity() const {
         if (message_box_capacity_ == std::numeric_limits<std::size_t>::max()) {
-            std::numeric_limits<std::size_t>::max();
+            return std::numeric_limits<std::size_t>::max();
         }
         return message_box_capacity_ - outgoing_message_box.size();
     }
@@ -304,15 +291,11 @@ public:
     /// Posting a message may fail if the message box is full and no send slots are available.
     /// @return an optional containing the request id if the message was successfully posted, otherwise nullopt
     auto post_message(MessageContainer&& message, PEID receiver) -> std::optional<std::size_t> {
-        // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));
-        // assert(receiver != rank_);
-        if (message.size() == 0) {
-            std::runtime_error("empty messages should not happen");
-            return std::nullopt;
-        }
+        // TODO check if everything works if the message is empty
+        // if (message.size() == 0) {
+        //     return std::nullopt;
+        // }
         internal::handles::SendHandle<T, MessageContainer> handle(comm_);
-        // std::cout << "message.size=" << message.size();
-        // std::cout << " tag=" << handle.tag() << "\n";
         int tag = SMALL_MESSAGE_TAG;
         if (message.size() > reserved_receive_buffer_size_) {
             if (!allow_large_messages_) {
@@ -328,11 +311,8 @@ public:
         if (outgoing_message_box.empty() && empty_send_slots() > 0) {
             // we can try to send directly
             auto returned_handle = try_send_something(-1, std::move(handle));
-            if (returned_handle.has_value()) {
-                // no slots available
-                throw std::runtime_error("We just checked for an empty slot");
-                return std::nullopt;
-            }  // succeeded
+            KASSERT(returned_handle.has_value(),
+                    "This should always succeed since we checked for an empty slot before.");
             auto receipt = std::optional{this->request_id_};
             this->request_id_++;
             local_message_count.send++;
@@ -352,9 +332,8 @@ public:
         return receipt;
     }
 
+    /// For single element messages
     auto post_message(T message, PEID receiver) -> std::optional<std::size_t> {
-        // atomic_debug(fmt::format("enqueued msg={}, to {}", message, receiver));
-        // assert(receiver != rank_);
         MessageContainer message_vector{std::move(message)};
         return post_message(std::move(message_vector), receiver);
     }
@@ -362,48 +341,17 @@ public:
     bool progress_sending(SendFinishedCallback<MessageContainer> auto on_finished_sending) {
         constexpr bool move_back_message = std::invocable<decltype(on_finished_sending), std::size_t, MessageContainer>;
         // check for finished sends and try starting new ones
-        bool something_happenend = false;
-        // if (request_pool.active_requests() == 0) {
-        //     return true;
-        // }
-        bool progress = true;
-        // while (progress) {
-        progress = false;
-        // if (!use_custom_implementation_) {
         return request_pool.test_any([&](int completed_request_index) {
             std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
             auto message = in_transit_messages[completed_request_index].extract_message();
             in_transit_messages[completed_request_index].emplace({comm_});
-            something_happenend = true;
-            progress = true;
             if constexpr (move_back_message) {
                 on_finished_sending(request_id, std::move(message));
             } else {
                 on_finished_sending(request_id);
             }
-            // spdlog::info("try_send_something_from_message_box({})", completed_request_index);
-            // try_send_something_from_message_box(completed_request_index);
+	    try_send_something_from_message_box(completed_request_index);
         });
-        //         } else {
-        //             request_pool.my_test_any([&](int completed_request_index) {
-        //                 std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
-        //                 auto message = in_transit_messages[completed_request_index].extract_message();
-        //                 in_transit_messages[completed_request_index].emplace({comm_});
-        //                 something_happenend = true;
-        //                 progress = true;
-        //                 if constexpr (move_back_message) {
-        //                     on_finished_sending(request_id, std::move(message));
-        //                 } else {
-        //                     on_finished_sending(request_id);
-        //                 }
-        //                 try_send_something_from_message_box(completed_request_index);
-        //             });
-        //         }
-        //     // }
-        // }
-        // while (try_send_something_from_message_box()) {
-        // }
-        // return something_happenend;
     }
 
     bool probe_for_messages_persistent(MessageHandler<T, std::span<T>> auto&& on_message) {
@@ -555,16 +503,6 @@ public:
         return std::nullopt;
     }
 
-    void reset() {
-        local_message_count = {.send = 0, .receive = 0};
-        message_count_reduce_buffer = {.send = 0, .receive = 0};
-        global_message_count = {.send = std::numeric_limits<size_t>::max(),
-                                .receive = std::numeric_limits<size_t>::max() - 1};
-        request_id_ = 0;
-        termination_state_ = TerminationState::active;
-        number_of_waves = 0;
-    }
-
     void reactivate() {
         if (synchronous_mode_) {
             return;
@@ -706,10 +644,6 @@ public:
         max_probe_rounds_ = rounds;
     }
 
-    void use_custom_implementation(bool use_it = true) {
-        use_custom_implementation_ = use_it;
-    }
-
 private:
     std::deque<internal::handles::SendHandle<T, MessageContainer>> outgoing_message_box;
     std::size_t message_box_capacity_ = std::numeric_limits<size_t>::max();
@@ -721,16 +655,16 @@ private:
     std::vector<MPI_Request> receive_requests;
     std::vector<int> indices;
     std::vector<MPI_Status> statuses;
-    internal::MessageCounter local_message_count = {0, 0};
+    internal::MessageCounter local_message_count = {.send=0, .receive=0};
     internal::MessageCounter message_count_reduce_buffer;
-    internal::MessageCounter global_message_count = {std::numeric_limits<size_t>::max(),
-                                                     std::numeric_limits<size_t>::max() - 1};
+    internal::MessageCounter global_message_count = {.send=std::numeric_limits<size_t>::max(),
+                                                     .receive=std::numeric_limits<size_t>::max() - 1};
     MPI_Request termination_request = MPI_REQUEST_NULL;
     // MessageStatistics stats_;
-    size_t request_id_;
+    size_t request_id_ = 0;
     MPI_Comm comm_;
-    PEID rank_;
-    PEID size_;
+    PEID rank_ = 0;
+    PEID size_ = 0;
     int TAG_UB;
     int LARGE_MESSAGE_TAG;
     int SMALL_MESSAGE_TAG;
@@ -740,7 +674,6 @@ private:
     size_t number_of_waves = 0;
     size_t max_probe_rounds_ = std::numeric_limits<size_t>::max();
     bool use_test_any_ = false;
-    bool use_custom_implementation_ = false;
     bool synchronous_mode_ = false;
 };
 
