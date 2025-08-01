@@ -37,9 +37,9 @@ concept IndirectionScheme = requires(T scheme, MPI_Comm comm, PEID sender, PEID 
 
 class GridIndirectionScheme {
 public:
-  GridIndirectionScheme(MPI_Comm comm) : comm_(comm), grid_size_(std::round(std::sqrt(size()))) {
-    MPI_Comm_rank(comm_, &my_rank_);
-    MPI_Comm_size(comm_, &my_size_);
+    GridIndirectionScheme(MPI_Comm comm) : comm_(comm), grid_size_(std::round(std::sqrt(size()))) {
+        MPI_Comm_rank(comm_, &my_rank_);
+        MPI_Comm_size(comm_, &my_size_);
     }
 
     PEID next_hop(PEID sender, PEID receiver) const {
@@ -108,11 +108,15 @@ private:
 
 public:
     IndirectionAdapter(BufferedQueueType queue, Indirector indirector)
-    : BufferedQueueType(std::move(queue)), indirection_(std::move(indirector)) {}
+        : BufferedQueueType(std::move(queue)), indirection_(std::move(indirector)) {}
 
-    auto &indirection_scheme() { return indirection_; }
+    auto& indirection_scheme() {
+        return indirection_;
+    }
 
-    auto const &indirection_scheme() const { return indirection_; }
+    auto const& indirection_scheme() const {
+        return indirection_;
+    }
 
     bool post_message(InputMessageRange<MessageType> auto&& message,
                       PEID receiver,
@@ -157,7 +161,7 @@ public:
         }
         return queue_type::post_message_blocking(std::forward<decltype(message)>(message), next_hop, envelope_sender,
                                                  envelope_receiver, tag,
-						 redirection_handler(std::forward<decltype(on_message)>(on_message)));
+                                                 redirection_handler(std::forward<decltype(on_message)>(on_message)));
     }
 
     /// Note: messages have to be passed as rvalues. If you want to send static
@@ -183,11 +187,9 @@ public:
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
     /// (not necessarily the underlying data) is moved to the handler when
     /// called.
-    auto
-    poll(MessageHandler<typename queue_type::message_type> auto &&on_message)
+    auto poll(MessageHandler<typename queue_type::message_type> auto&& on_message)
         -> std::optional<std::pair<bool, bool>> {
-      return queue_type::poll(
-          redirection_handler(std::forward<decltype(on_message)>(on_message)));
+        return queue_type::poll(redirection_handler(std::forward<decltype(on_message)>(on_message)));
     }
 
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
@@ -202,36 +204,35 @@ public:
     /// called.
     [[nodiscard]] bool terminate(MessageHandler<typename queue_type::message_type> auto&& on_message,
                                  std::invocable<> auto&& progress_hook) {
-      return queue_type::terminate(redirection_handler(std::forward<decltype(on_message)>(on_message)), progress_hook);
+        return queue_type::terminate(redirection_handler(std::forward<decltype(on_message)>(on_message)),
+                                     progress_hook);
     }
 
 private:
-  auto redirection_handler(
-      MessageHandler<typename queue_type::message_type> auto &&on_message) {
-    return [&](Envelope<typename queue_type::message_type> auto envelope) {
-      //kamping::measurements::timer().start("handler");
-      //kamping::measurements::timer().start("check_redirect");
-      bool should_redirect = indirection_.should_redirect(envelope.sender, envelope.receiver);
-      //kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
-      //kamping::measurements::timer().start("handler_inner");
-      if (should_redirect) {
-	// spdlog::warn("not expected to redirect anything");
-        post_message_blocking(std::move(envelope.message), envelope.receiver,
-                              envelope.sender, envelope.receiver, envelope.tag,
-                              std::forward<decltype(on_message)>(on_message));
-      } else {
-	// kamping::measurements::timer().start("kassert");
-        KASSERT(envelope.receiver == this->rank());
-	//kamping::measurements::timer().stop_and_add();
-	//kamping::measurements::timer().start("ind_on_message");
-        on_message(std::move(envelope));
-	//kamping::measurements::timer().stop_and_add();
-      }
-      //kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
-      //kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
-    };
-  }
-  Indirector indirection_;
+    auto redirection_handler(MessageHandler<typename queue_type::message_type> auto&& on_message) {
+        return [&](Envelope<typename queue_type::message_type> auto envelope) {
+            // kamping::measurements::timer().start("handler");
+            // kamping::measurements::timer().start("check_redirect");
+            bool should_redirect = indirection_.should_redirect(envelope.sender, envelope.receiver);
+            // kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
+            // kamping::measurements::timer().start("handler_inner");
+            if (should_redirect) {
+                // spdlog::warn("not expected to redirect anything");
+                post_message_blocking(std::move(envelope.message), envelope.receiver, envelope.sender,
+                                      envelope.receiver, envelope.tag, std::forward<decltype(on_message)>(on_message));
+            } else {
+                // kamping::measurements::timer().start("kassert");
+                KASSERT(envelope.receiver == this->rank());
+                // kamping::measurements::timer().stop_and_add();
+                // kamping::measurements::timer().start("ind_on_message");
+                on_message(std::move(envelope));
+                // kamping::measurements::timer().stop_and_add();
+            }
+            // kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
+            // kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
+        };
+    }
+    Indirector indirection_;
 };
 
 }  // namespace message_queue
