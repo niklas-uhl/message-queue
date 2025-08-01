@@ -21,7 +21,7 @@ target_sources(
   INTERFACE
   FILE_SET HEADERS
   BASE_DIRS
-  include
+  src
 )
 target_link_libraries(message-queue INTERFACE MPI::MPI_CXX kassert::kassert)
 target_link_libraries(message-queue INTERFACE kamping::kamping)
