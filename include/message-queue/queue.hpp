@@ -1019,6 +1019,7 @@ public:
                                  std::invocable<> auto&& before_next_message_counting_round_hook) {
         return terminate(
             std::forward<decltype(on_message)>(on_message),
+	    [](std::size_t){},
             std::forward<decltype(before_next_message_counting_round_hook)>(before_next_message_counting_round_hook),
             []() {});
     }
