@@ -36,16 +36,10 @@
 #include <vector>
 #include "./message_handles.hpp"
 #include "./request_pool.hpp"
+#include "./termination_counter.hpp"
 #include "message-queue/concepts.hpp"
 
 namespace message_queue {
-namespace internal {
-struct MessageCounter {
-    size_t send;
-    size_t receive;
-    auto operator<=>(const MessageCounter&) const = default;
-};
-}  // namespace internal
 
 enum class ReceiveMode : std::uint8_t { poll, posted_receives, persistent };
 
@@ -173,6 +167,7 @@ public:
           receive_requests(num_request_slots, MPI_REQUEST_NULL),
           indices(num_request_slots),
           statuses(num_request_slots),
+	  termination_(comm),
           comm_(comm),
           receive_mode_(receive_mode) {
         MPI_Comm_rank(comm_, &rank_);
@@ -200,10 +195,6 @@ public:
         this->receive_requests = std::move(other.receive_requests);
         this->indices = std::move(other.indices);
         this->statuses = std::move(other.statuses);
-        this->local_message_count = other.local_message_count;
-        this->message_count_reduce_buffer = other.message_count_reduce_buffer;
-        this->global_message_count = other.global_message_count;
-        this->termination_request = other.termination_request;
         this->request_id_ = other.request_id_;
         this->comm_ = other.comm_;
         this->rank_ = other.rank_;
@@ -300,7 +291,7 @@ public:
                     "This should always succeed since we checked for an empty slot before.");
             auto receipt = std::optional{this->request_id_};
             this->request_id_++;
-p            local_message_count.send++;
+	    termination_.track_send();
             return receipt;
         }
         // try appending to the message box
@@ -313,7 +304,7 @@ p            local_message_count.send++;
         auto receipt = std::optional{this->request_id_};
         this->request_id_++;
         try_send_something_from_message_box();
-        local_message_count.send++;
+	termination_.track_send();
         return receipt;
     }
 
@@ -356,7 +347,7 @@ p            local_message_count.send++;
             KASSERT(indices[0] != MPI_UNDEFINED,
                     "This should not happen, because we always have pending receive requests.");
             something_happenend = true;
-            local_message_count.receive++;
+	    termination_.track_receive();
             auto request_index = indices[0];
             auto& status = statuses[0];
             auto& buffer = receive_buffers[request_index];
@@ -386,7 +377,7 @@ p            local_message_count.send++;
             for (size_t i = 0; i < messages_to_receive.size(); i++) {
                 auto& handle = messages_to_receive[i];
                 auto& buffer = receive_buffers[i];
-                local_message_count.receive++;
+		termination_.track_receive();
                 auto message = std::span(buffer).first(handle.message_size());
                 on_message(MessageEnvelope{std::move(message), handle.sender(), rank_, handle.tag()});
             }
@@ -442,7 +433,7 @@ p            local_message_count.send++;
             MPI_Request recv_req = MPI_REQUEST_NULL;
             recv_handle.set_request(&recv_req);
             recv_handle.receive();
-            local_message_count.receive++;
+	    termination_.track_receive();
             on_message(MessageEnvelope{recv_handle.extract_message(), recv_handle.sender(), rank_, recv_handle.tag()});
             return true;
         }
@@ -488,17 +479,6 @@ p            local_message_count.send++;
         return comm_;
     }
 
-    bool check_termination_condition() {
-        bool terminated = message_count_reduce_buffer == global_message_count &&
-                          global_message_count.send == global_message_count.receive;
-        if (!terminated) {
-            // store for double counting
-            global_message_count = message_count_reduce_buffer;
-        }
-        termination_state_ = TerminationState::terminated;
-        return terminated;
-    }
-
     void poll_until_message_box_empty(
         MessageHandler<T, MessageContainer> auto&& on_message,
         SendFinishedCallback<MessageContainer> auto&& on_finished_sending,
@@ -510,24 +490,6 @@ p            local_message_count.send++;
                 return;
             }
         }
-    }
-
-    void start_message_counting() {
-        if (termination_request == MPI_REQUEST_NULL) {
-            message_count_reduce_buffer = local_message_count;
-            MPI_Iallreduce(MPI_IN_PLACE, &message_count_reduce_buffer, 2, kamping::mpi_datatype<size_t>(), MPI_SUM,
-                           comm_, &termination_request);
-        }
-    }
-
-
-    bool message_counting_finished() {
-        if (termination_request == MPI_REQUEST_NULL) {
-            return true;
-        }
-        int reduce_finished = 0;
-        int err = MPI_Test(&termination_request, &reduce_finished, MPI_STATUS_IGNORE);
-        return static_cast<bool>(reduce_finished);
     }
 
     [[nodiscard]] bool terminate(MessageHandler<T, MessageContainer> auto&& on_message,
@@ -546,7 +508,7 @@ p            local_message_count.send++;
             if (termination_state_ == TerminationState::active) {
                 return false;
             }
-            start_message_counting();
+	    termination_.start_message_counting();
             // poll at least once, so we don't miss any messages
             // if the the message box is empty upon calling this function
             // we never get to poll if message counting finishes instantly
@@ -557,8 +519,8 @@ p            local_message_count.send++;
                 if (termination_state_ == TerminationState::active) {
 		  return false;
                 }
-            } while (!message_counting_finished());
-            if (check_termination_condition()) {
+            } while (!termination_.message_counting_finished());
+            if (termination_.terminated()) {
                 termination_state_ = TerminationState::terminated;
                 return true;
             }
@@ -598,11 +560,7 @@ private:
     std::vector<MPI_Request> receive_requests;
     std::vector<int> indices;
     std::vector<MPI_Status> statuses;
-    internal::MessageCounter local_message_count = {.send = 0, .receive = 0};
-    internal::MessageCounter message_count_reduce_buffer;
-    internal::MessageCounter global_message_count = {.send = std::numeric_limits<size_t>::max(),
-                                                     .receive = std::numeric_limits<size_t>::max() - 1};
-    MPI_Request termination_request = MPI_REQUEST_NULL;
+    internal::TerminationCounter termination_;
     size_t request_id_ = 0;
     MPI_Comm comm_;
     PEID rank_ = 0;

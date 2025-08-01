@@ -10,4 +10,5 @@ target_sources(
   queue.hpp
   request_pool.hpp
   message_handles.hpp
+  termination_counter.hpp
 )
