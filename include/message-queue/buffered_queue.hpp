@@ -384,7 +384,7 @@ public:
     }
 
     void flush_largest_buffer() {
-        flush_largest_buffer_impl(buffers_.end());
+        auto _ = flush_largest_buffer_impl(buffers_.end());
     }
 
     /// Note: Message handlers take a MessageEnvelope as single argument. The

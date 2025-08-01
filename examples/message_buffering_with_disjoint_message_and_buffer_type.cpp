@@ -17,10 +17,9 @@
 // IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#include <fmt/format.h>
-#include <fmt/ranges.h>
 #include <CLI/CLI.hpp>
 #include <message-queue/buffered_queue.hpp>
+#include <print>
 #include <random>
 #include <range/v3/all.hpp>
 
@@ -80,12 +79,12 @@ auto main(int argc, char* argv[]) -> int {
                });
     };
     auto printing_cleaner = [](auto& buf, message_queue::PEID receiver) {
-        message_queue::atomic_debug(fmt::format("Preparing buffer {} to {}.", buf, receiver));
+        std::println("Preparing buffer {} to {}.", buf, receiver);
     };
     {
         auto queue = message_queue::make_buffered_queue<std::pair<int, int>, int>(
             MPI_COMM_WORLD, 8, message_queue::ReceiveMode::poll, merge, split, printing_cleaner);
-	queue.synchronous_mode();
+        queue.synchronous_mode();
         int rank, size;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         MPI_Comm_size(MPI_COMM_WORLD, &size);
@@ -110,8 +109,7 @@ auto main(int argc, char* argv[]) -> int {
 
         size_t zero_message_counter = 0;
         auto handler = [&](message_queue::Envelope<std::pair<int, int>> auto envelope) {
-            message_queue::atomic_debug(
-                fmt::format("Message {} (tag={}) from {} arrived.", envelope.message, envelope.tag, envelope.sender));
+            std::println("Message {} (tag={}) from {} arrived.", envelope.message, envelope.tag, envelope.sender);
 
             if (envelope.message.size() == 1 && envelope.message[0] == std::pair{0, 0}) {
                 KASSERT(rank == 0 && envelope.tag == 0);
@@ -123,7 +121,7 @@ auto main(int argc, char* argv[]) -> int {
                 }
             }
         };
-        auto _  = queue.terminate(handler);
+        auto _ = queue.terminate(handler);
         if (rank == 0) {
             KASSERT(zero_message_counter == size);
         } else {

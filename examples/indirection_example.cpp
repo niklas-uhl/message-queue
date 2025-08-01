@@ -17,12 +17,11 @@
 // IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#include <fmt/format.h>
-#include <fmt/ranges.h>
 #include <message-queue/buffered_queue.hpp>
 #include <message-queue/concepts.hpp>
 #include <message-queue/indirection.hpp>
 #include <span>
+#include <print>
 
 auto main() -> int {
     MPI_Init(nullptr, nullptr);
@@ -56,14 +55,13 @@ auto main() -> int {
     {
         auto queue = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, 8, message_queue::ReceiveMode::poll,
                                                              merger, splitter);
-	queue.synchronous_mode();
+        queue.synchronous_mode();
         auto indirection =
             message_queue::IndirectionAdapter{std::move(queue), message_queue::GridIndirectionScheme{MPI_COMM_WORLD}};
         indirection.post_message(42, 0);
         auto _ = indirection.terminate([](message_queue::Envelope<int> auto envelope) {
-            message_queue::atomic_debug(fmt::format("Message {} from {} arrived via {}.",
-                                                    envelope.message | std::ranges::views::take(1), envelope.sender,
-                                                    envelope.message | std::ranges::views::drop(1)));
+            std::println("Message {} from {} arrived via {}.", envelope.message | std::ranges::views::take(1),
+                         envelope.sender, envelope.message | std::ranges::views::drop(1));
         });
     }
     MPI_Finalize();

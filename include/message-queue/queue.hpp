@@ -34,13 +34,11 @@
 #include <utility>
 #include <vector>
 #include "message-queue/concepts.hpp"
-#include "message-queue/debug_print.hpp"
 #include "./request_pool.hpp"
 
 namespace message_queue {
 
 namespace internal {
-size_t comm_size(MPI_Comm comm = MPI_COMM_WORLD);
 
 namespace handles {
 template <MPIType S, MPIBuffer MessageContainer = std::vector<S>>
@@ -59,7 +57,6 @@ public:
         }
         int finished = false;
         int err = MPI_Test(request_, &finished, MPI_STATUS_IGNORE);
-        check_mpi_error(err, __FILE__, __LINE__);
         if (finished) {
             return true;
         }
@@ -101,7 +98,6 @@ public:
         // format(this->comm_)));
         int err = MPI_Isend(std::data(*this->message_), std::size(*this->message_), kamping::mpi_datatype<S>(),
                             receiver_, this->tag_, this->comm_, this->request_);
-        check_mpi_error(err, __FILE__, __LINE__);
     }
 
     void set_message(MessageContainer message) {
@@ -818,7 +814,6 @@ public:
         }
         int reduce_finished = false;
         int err = MPI_Test(&termination_request, &reduce_finished, MPI_STATUS_IGNORE);
-        check_mpi_error(err, __FILE__, __LINE__);
         return reduce_finished;
     }
 

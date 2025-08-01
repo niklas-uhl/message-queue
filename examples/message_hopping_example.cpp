@@ -17,14 +17,14 @@
 // IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#include <fmt/format.h>
 #include <mpi.h>
 #include <CLI/CLI.hpp>
+#include <format>
 #include <iostream>
+#include <print>
 #include <random>
 #include <string>
 #include "../tests/testing_helpers.hpp"
-#include "message-queue/debug_print.hpp"
 #include "message-queue/queue.hpp"
 
 int main(int argc, char* argv[]) {
@@ -48,7 +48,6 @@ int main(int argc, char* argv[]) {
 
     CLI11_PARSE(app, argc, argv);
 
-    DEBUG_BARRIER(rank);
     const int message_size = 10;
 
     for (size_t i = 0; i < iterations; i++) {
@@ -79,9 +78,7 @@ int main(int argc, char* argv[]) {
         auto on_message = [&](message_queue::Envelope<int> auto envelope) {
             if (bernoulli_dist(eng)) {
                 auto begin = envelope.message.begin();
-                std::stringstream ss;
-                ss << "Message " << *(begin + 2) << " from " << *begin << " arrived after " << *(begin + 1) << " hops.";
-                message_queue::atomic_debug(ss.str());
+                std::print("Message {} from {} arrived after {} hops.\n", *(begin + 2), *begin, *(begin + 1));
             } else {
                 KASSERT(envelope.message.size() > 1);
                 envelope.message[1]++;
@@ -112,11 +109,11 @@ int main(int argc, char* argv[]) {
                 stats[option->get_single_name()] = "false";
             }
         }
-        stats["ranks"] = fmt::format("{}", size);
-        stats["time"] = fmt::format("{}", end - start);
-        stats["iteration"] = fmt::format("{}", i);
-        stats["max_test_size"] = fmt::format("{}", global_max_test_size);
-        stats["max_active_requests"] = fmt::format("{}", global_max_active_requests);
+        stats["ranks"] = std::format("{}", size);
+        stats["time"] = std::format("{}", end - start);
+        stats["iteration"] = std::format("{}", i);
+        stats["max_test_size"] = std::format("{}", global_max_test_size);
+        stats["max_active_requests"] = std::format("{}", global_max_active_requests);
 
         if (rank == 0) {
             std::cout << "RESULT";

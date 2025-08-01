@@ -17,10 +17,9 @@
 // IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#include <fmt/format.h>
-#include <fmt/ranges.h>
 #include <CLI/CLI.hpp>
 #include <message-queue/buffered_queue.hpp>
+#include <print>
 #include <random>
 
 auto main(int argc, char* argv[]) -> int {
@@ -34,7 +33,7 @@ auto main(int argc, char* argv[]) -> int {
     CLI11_PARSE(app, argc, argv);
 
     auto printing_cleaner = [](auto& buf, message_queue::PEID receiver) {
-        message_queue::atomic_debug(fmt::format("Preparing buffer {} to {}.", buf, receiver));
+        std::print("Preparing buffer {} to {}.\n", buf, receiver);
     };
     {
         auto queue1 = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, 8, message_queue::ReceiveMode::poll,
@@ -48,7 +47,6 @@ auto main(int argc, char* argv[]) -> int {
         int rank, size;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         MPI_Comm_size(MPI_COMM_WORLD, &size);
-        DEBUG_BARRIER(rank);
         std::mt19937 gen;
         std::uniform_int_distribution<int> dist(0, size - 1);
         for (auto i = 0; i < number_of_messages; ++i) {
@@ -57,11 +55,11 @@ auto main(int argc, char* argv[]) -> int {
             queue2.post_message(2, val);
         }
         auto _ = queue2.terminate([&](message_queue::Envelope<int> auto envelope) {
-            message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", envelope.message, envelope.sender));
+            std::print("Message {} from {} arrived.\n", envelope.message, envelope.sender);
         });
 
         _ = queue1.terminate([&](message_queue::Envelope<int> auto envelope) {
-            message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", envelope.message, envelope.sender));
+            std::print("Message {} from {} arrived.", envelope.message, envelope.sender);
         });
     }
     MPI_Finalize();

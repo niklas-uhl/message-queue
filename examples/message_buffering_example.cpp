@@ -17,10 +17,9 @@
 // IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#include <fmt/format.h>
-#include <fmt/ranges.h>
 #include <CLI/CLI.hpp>
 #include <message-queue/buffered_queue.hpp>
+#include <print>
 #include <random>
 
 std::map<std::string, message_queue::FlushStrategy> flush_strategy_map{
@@ -73,16 +72,15 @@ auto main(int argc, char* argv[]) -> int {
     CLI11_PARSE(app, argc, argv);
 
     auto printing_cleaner = [](auto& buf, message_queue::PEID receiver) {
-        message_queue::atomic_debug(fmt::format("Preparing buffer {} to {}.", buf, receiver));
+        std::print("Preparing buffer {} to {}.\n", buf, receiver);
     };
     {
         auto queue = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, 8, message_queue::ReceiveMode::poll,
                                                              printing_cleaner);
-	queue.synchronous_mode();
+        queue.synchronous_mode();
         int rank, size;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         MPI_Comm_size(MPI_COMM_WORLD, &size);
-        DEBUG_BARRIER(rank);
         std::mt19937 gen;
         std::uniform_int_distribution<int> dist(0, size - 1);
         if (global_threshold != std::numeric_limits<size_t>::max()) {
@@ -97,7 +95,7 @@ auto main(int argc, char* argv[]) -> int {
             queue.post_message(val, val);
         }
         auto _ = queue.terminate([&](message_queue::Envelope<int> auto envelope) {
-            message_queue::atomic_debug(fmt::format("Message {} from {} arrived.", envelope.message, envelope.sender));
+            std::println("Message {} from {} arrived.", envelope.message, envelope.sender);
         });
     }
     MPI_Finalize();

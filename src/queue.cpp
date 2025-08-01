@@ -1,4 +1,4 @@
-// Copyright (c) 2021-2023 Tim Niklas Uhl
+// Copyright (c) 2021-2025 Tim Niklas Uhl
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of
 // this software and associated documentation files (the "Software"), to deal in
@@ -18,12 +18,3 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include "message-queue/queue.hpp"
-
-namespace message_queue {
-size_t internal::comm_size(MPI_Comm comm) {
-    int size;
-    MPI_Comm_size(comm, &size);
-    return static_cast<size_t>(size);
-}
-
-}  // namespace message_queue
