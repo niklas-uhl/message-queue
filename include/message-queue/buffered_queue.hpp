@@ -34,7 +34,6 @@
 #include "message-queue/concepts.hpp"
 #include "message-queue/queue.hpp"
 
-#include <spdlog/spdlog.h>
 
 namespace message_queue {
 
@@ -185,7 +184,7 @@ public:
                 reserve_send_buffers(1);
             } else {
                 if (buffers_.size() - 1 >= max_num_send_buffers_ /* minus the buffer we try to create */) {
-		  spdlog::debug("Flushing largest buffer to recover buffer space.");
+		  // spdlog::debug("Flushing largest buffer to recover buffer space.");
 		  flush_largest_buffer();
                 }
                 // spdlog::debug("free_list={} + queue.used_send_slots={} + buffers_.size()={} - 1 == num_send_buffers={}",

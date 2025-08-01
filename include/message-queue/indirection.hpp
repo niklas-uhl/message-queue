@@ -26,7 +26,6 @@
 #include "message-queue/definitions.hpp"
 
 #include <kamping/measurements/timer.hpp>
-#include <spdlog/spdlog.h>
 
 namespace message_queue {
 template <typename T>
@@ -216,7 +215,7 @@ private:
       //kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
       //kamping::measurements::timer().start("handler_inner");
       if (should_redirect) {
-	spdlog::warn("not expected to redirect anything");
+	// spdlog::warn("not expected to redirect anything");
         post_message_blocking(std::move(envelope.message), envelope.receiver,
                               envelope.sender, envelope.receiver, envelope.tag,
                               std::forward<decltype(on_message)>(on_message));

@@ -29,7 +29,7 @@ set(message_queue_source_files
 
 add_library(message-queue ${message_queue_source_files})
 target_include_directories(message-queue PUBLIC include)
-target_link_libraries(message-queue PUBLIC MPI::MPI_CXX kassert::kassert fmt::fmt spdlog::spdlog)
+target_link_libraries(message-queue PUBLIC MPI::MPI_CXX kassert::kassert fmt::fmt)
 target_link_libraries(message-queue PUBLIC kamping::kamping)
   
 target_compile_features(message-queue PUBLIC cxx_std_23)

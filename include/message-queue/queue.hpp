@@ -32,11 +32,10 @@
 #include <span>
 #include <utility>
 #include <vector>
+#include <chrono>
 #include "message-queue/concepts.hpp"
 #include "message-queue/debug_print.hpp"
 
-
-#include <spdlog/spdlog.h>
 
 namespace message_queue {
 
