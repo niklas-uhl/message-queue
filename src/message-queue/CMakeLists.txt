@@ -9,4 +9,5 @@ target_sources(
   indirection.hpp
   queue.hpp
   request_pool.hpp
+  message_handles.hpp
 )
