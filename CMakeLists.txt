@@ -1,8 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 project(message-queue LANGUAGES CXX)
 
-option(MESSAGE_QUEUE_BACKTRACE "Enable stacktraces" ON)
-
 include(cmake/dependencies.cmake)
 
 find_package(MPI REQUIRED)
