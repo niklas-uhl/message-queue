@@ -142,44 +142,6 @@ public:
         return static_cast<bool>(flag);
     }
 
-    /// my request functions {{{
-    template <typename CompletionFunction>
-    void my_test_any(CompletionFunction&& on_complete = [](int) {}) {
-        max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
-        for (int i = active_range.first; i < active_range.second; i++) {
-            if (requests[i] == MPI_REQUEST_NULL) {
-                continue;
-            }
-            int flag = 0;
-            MPI_Test(&requests[i], &flag, MPI_STATUS_IGNORE);
-            if (flag) {
-                remove_from_active_range(i);
-                track_max_active_requests();
-                on_complete(i);
-                return;
-            }
-        }
-    }
-
-    template <typename CompletionFunction>
-    void my_test_some(CompletionFunction&& on_complete = [](int) {}) {
-        max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
-        for (int i = active_range.first; i < active_range.second; i++) {
-            if (requests[i] == MPI_REQUEST_NULL) {
-                continue;
-            }
-            int flag = 0;
-            MPI_Test(&requests[i], &flag, MPI_STATUS_IGNORE);
-            if (flag) {
-                remove_from_active_range(i);
-                track_max_active_requests();
-                on_complete(i);
-            }
-        }
-    }
-
-    /// }}}
-
     std::size_t active_requests() const {
         return active_requests_;
     }
