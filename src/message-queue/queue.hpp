@@ -287,7 +287,7 @@ public:
         if (outgoing_message_box.empty() && empty_send_slots() > 0) {
             // we can try to send directly
             auto returned_handle = try_send_something(-1, std::move(handle));
-            KASSERT(returned_handle.has_value(),
+            KASSERT(!returned_handle.has_value(),
                     "This should always succeed since we checked for an empty slot before.");
             auto receipt = std::optional{this->request_id_};
             this->request_id_++;
