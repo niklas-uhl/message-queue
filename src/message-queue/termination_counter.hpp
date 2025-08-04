@@ -20,7 +20,6 @@
 #pragma once
 
 #include <mpi.h>
-#include <compare>
 #include <cstddef>
 #include <kamping/mpi_datatype.hpp>
 #include <limits>
