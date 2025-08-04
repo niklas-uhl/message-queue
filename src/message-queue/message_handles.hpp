@@ -19,31 +19,24 @@
 
 #pragma once
 
+#include <mpi.h>
+#include <concepts>
+#include <optional>
+#include <ranges>
 #include "./concepts.hpp"
 
-namespace message_queue::internal {
-
-namespace handles {
+namespace message_queue::internal::handles {
 template <MPIType S, MPIBuffer MessageContainer = std::vector<S>>
     requires std::same_as<S, typename std::ranges::range_value_t<MessageContainer>>
 class MessageHandle {
 public:
-    // MessageHandle() {};
-    // MessageHandle(MessageHandle const&) = delete;
-    // MessageHandle(MessageHandle&&) = default;
-    // MessageHandle& operator=(MessageHandle const&) = delete;
-    // MessageHandle& operator=(MessageHandle&&) = delete;
-
     bool test() {
         if (request_ == nullptr) {
             return false;
         }
-        int finished = false;
+        int finished = 0;
         int err = MPI_Test(request_, &finished, MPI_STATUS_IGNORE);
-        if (finished) {
-            return true;
-        }
-        return false;
+        return static_cast<bool>(finished);
     }
 
     void set_request(MPI_Request* req) {
@@ -66,7 +59,7 @@ protected:
     size_t message_size_ = 0;
     std::optional<MessageContainer> message_;
     MPI_Request* request_ = nullptr;
-    size_t request_id_;
+    size_t request_id_ = 0;
     int tag_ = MPI_ANY_TAG;
 };
 
@@ -76,9 +69,6 @@ public:
     SendHandle(MPI_Comm comm = MPI_COMM_NULL) : MessageHandle<S, MessageContainer>(), comm_(comm) {}
 
     void initiate_send() {
-        // std::cout << "tag=" << this->tag_ << " size=" << this->message_.size() << "\n";
-        // atomic_debug(fmt::format("Isend m={}, receiver={}, tag={}, comm={}", this->message_, receiver_, this->tag_,
-        // format(this->comm_)));
         int err = MPI_Isend(std::data(*this->message_), std::size(*this->message_), kamping::mpi_datatype<S>(),
                             receiver_, this->tag_, this->comm_, this->request_);
     }
@@ -103,11 +93,11 @@ public:
         return this->request_id_;
     }
 
-    PEID receiver() const {
+    [[nodiscard]] PEID receiver() const {
         return receiver_;
     }
 
-    void swap(SendHandle& other) {
+    void swap(SendHandle& other) noexcept {
         std::swap(this->receiver_, other.receiver_);
         std::swap(this->comm_, other.comm_);
         std::swap(this->request_, other.request_);
@@ -116,6 +106,7 @@ public:
         std::swap(this->message_size_, other.message_size_);
         std::swap(this->message_, other.message_);
     }
+
     void emplace(SendHandle&& other) {
         this->swap(other);
     }
@@ -128,13 +119,12 @@ private:
 template <MPIType S, MPIBuffer MessageContainer = std::vector<S>>
 class ReceiveHandle : public MessageHandle<S, MessageContainer> {
     MPI_Message matched_message_ = MPI_MESSAGE_NO_PROC;
-    MPI_Status status_;
+    MPI_Status status_ = {};
     PEID sender_ = MPI_ANY_SOURCE;
 
 public:
     void start_receive() {
         this->message_.resize(this->message_size_);
-        // atomic_debug(fmt::format("Imrecv msg={}", format(matched_message_)));
         MPI_Imrecv(this->message_.data(), this->message_.size(), kamping::mpi_datatype<S>(), &matched_message_,
                    this->request_);
     }
@@ -143,18 +133,17 @@ public:
         MPI_Imrecv(buffer.data(), buffer.size(), kamping::mpi_datatype<S>(), &matched_message_, this->request_);
     }
 
-    size_t message_size() const {
+    [[nodiscard]] size_t message_size() const {
         return this->message_size_;
     }
 
     void receive() {
         this->message_->resize(this->message_size_);
-        // atomic_debug(fmt::format("Mrecv msg={}", format(matched_message_)));
         MPI_Mrecv(std::data(*this->message_), std::size(*this->message_), kamping::mpi_datatype<S>(),
                   &this->matched_message_, MPI_STATUS_IGNORE);
     }
 
-    PEID sender() const {
+    [[nodiscard]] PEID sender() const {
         return sender_;
     }
 
@@ -162,16 +151,16 @@ public:
 };
 
 struct ProbeResult {
-    MPI_Status status;
-    MPI_Message matched_message;
-    MPI_Comm comm;
-    PEID sender;
-    int tag;
+    MPI_Status status = {};
+    MPI_Message matched_message = MPI_MESSAGE_NO_PROC;
+    MPI_Comm comm = MPI_COMM_NULL;
+    PEID sender = MPI_ANY_SOURCE;
+    int tag = 0;
 
     template <MPIType S, MPIBuffer MessageContainer = std::vector<S>>
     ReceiveHandle<S, MessageContainer> handle() {
         ReceiveHandle<S, MessageContainer> handle;
-        int message_size;
+        int message_size = 0;
         MPI_Get_count(&status, kamping::mpi_datatype<S>(), &message_size);
         handle.message_size_ = message_size;
         handle.matched_message_ = matched_message;
@@ -182,14 +171,10 @@ struct ProbeResult {
 };
 
 static std::optional<ProbeResult> probe(MPI_Comm comm, PEID source = MPI_ANY_SOURCE, PEID tag = MPI_ANY_TAG) {
-    ProbeResult result;
-    int message_found = false;
-    // atomic_debug(fmt::format("Improbe source={}, tag={}, comm={}", format_rank(source), format_tag(tag),
-    // format(comm)));
+    ProbeResult result{};
+    int message_found = 0;
     MPI_Improbe(source, tag, comm, &message_found, &result.matched_message, &result.status);
-    if (message_found) {
-        // atomic_debug(fmt::format("probe succeeded with source={}, tag={}, comm={}, msg", result.status.MPI_SOURCE,
-        //                          result.status.MPI_TAG, format(comm), format(result.matched_message)));
+    if (static_cast<bool>(message_found)) {
         result.sender = result.status.MPI_SOURCE;
         result.tag = result.status.MPI_TAG;
         result.comm = comm;
@@ -197,5 +182,4 @@ static std::optional<ProbeResult> probe(MPI_Comm comm, PEID source = MPI_ANY_SOU
     }
     return std::nullopt;
 }
-}  // namespace handles
-}  // namespace message_queue::internal
+}  // namespace message_queue::internal::handles
