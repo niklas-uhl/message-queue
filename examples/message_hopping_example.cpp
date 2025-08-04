@@ -84,15 +84,8 @@ int main(int argc, char* argv[]) {
         queue.poll(on_message);
         queue.terminate(on_message);
         using namespace std::chrono;
-        local_max_active_requests = queue.max_active_requests();
         MPI_Barrier(MPI_COMM_WORLD);
         double end = MPI_Wtime();
-        int global_max_test_size;
-        MPI_Reduce(&local_max_test_size, &global_max_test_size, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
-
-        size_t global_max_active_requests;
-        MPI_Reduce(&local_max_active_requests, &global_max_active_requests, 1, MPI_UINT64_T, MPI_MAX, 0,
-                   MPI_COMM_WORLD);
         // print CLI options
         std::unordered_map<std::string, std::string> stats;
         for (const auto& option : app.get_options()) {
@@ -107,8 +100,6 @@ int main(int argc, char* argv[]) {
         stats["ranks"] = std::format("{}", size);
         stats["time"] = std::format("{}", end - start);
         stats["iteration"] = std::format("{}", i);
-        stats["max_test_size"] = std::format("{}", global_max_test_size);
-        stats["max_active_requests"] = std::format("{}", global_max_active_requests);
 
         if (rank == 0) {
             std::cout << "RESULT";

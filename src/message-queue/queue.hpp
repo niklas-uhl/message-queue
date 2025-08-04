@@ -545,9 +545,6 @@ public:
         synchronous_mode_ = use_it;
     }
 
-    auto max_active_requests() const {
-        return request_pool.max_active_requests();
-    }
 
 private:
     std::deque<internal::handles::SendHandle<T, MessageContainer>> outgoing_message_box;

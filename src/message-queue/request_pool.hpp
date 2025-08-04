@@ -16,16 +16,31 @@
 // COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 // IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 #pragma once
 
+#include <mpi.h>
+#include <algorithm>
+#include <concepts>
+#include <cstddef>
+#include <kassert/kassert.hpp>
+#include <optional>
+#include <utility>
+#include <vector>
+
 namespace message_queue::internal {
+
+enum class SearchStrategy : std::uint8_t { linear, local };
+enum class CompletionStrategy : std::uint8_t { active, all, round_robin };
+
 class RequestPool {
 public:
     RequestPool(std::size_t capacity = 0) : requests(capacity, MPI_REQUEST_NULL), indices(capacity) {}
 
-    std::optional<std::pair<int, MPI_Request*>> get_some_inactive_request(int hint = -1) {
+    std::optional<std::pair<int, MPI_Request*>> get_some_inactive_request(
+        int hint = -1,
+        SearchStrategy search_strategy = SearchStrategy::linear) {
         if (inactive_requests() == 0) {
-            throw std::runtime_error("all slots are full");
             return {};
         }
 
@@ -37,25 +52,24 @@ public:
         // first check the hinted position
         if (hint >= 0 && hint < capacity() && requests[hint] == MPI_REQUEST_NULL) {
             add_to_active_range(hint);
-            track_max_active_requests();
             return {{hint, &requests[hint]}};
         }
-        auto it = std::ranges::find(requests, MPI_REQUEST_NULL);
-        if (it == requests.end()) {
-            throw std::runtime_error("find(requests) failed");
-            return std::nullopt;
+        if (search_strategy == SearchStrategy::linear) {
+            auto it = std::ranges::find(requests, MPI_REQUEST_NULL);
+            if (it == requests.end()) {
+                return std::nullopt;
+            }
+            std::size_t index = std::distance(requests.begin(), it);
+            add_to_active_range(static_cast<int>(index));
+            return {{index, &*it}};
         }
-        std::size_t i = std::distance(requests.begin(), it);
-        add_to_active_range(i);
-        track_max_active_requests();
-        return {{i, &*it}};
+        KASSERT(search_strategy == SearchStrategy::local);
 
         // first try to find a request in the active range if there is one
         if (active_requests_ < active_range.second - active_range.first) {
             for (auto i = active_range.first; i < active_range.second; i++) {
                 if (requests[i] == MPI_REQUEST_NULL) {
                     add_to_active_range(i);
-                    track_max_active_requests();
                     return {{i, &requests[i]}};
                 }
             }
@@ -64,7 +78,6 @@ public:
         for (auto i = active_range.second; i < capacity(); i++) {
             if (requests[i] == MPI_REQUEST_NULL) {
                 add_to_active_range(i);
-                track_max_active_requests();
                 return {{i, &requests[i]}};
             }
         }
@@ -72,7 +85,6 @@ public:
         for (auto i = active_range.first - 1; i >= 0; i--) {
             if (requests[i] == MPI_REQUEST_NULL) {
                 add_to_active_range(i);
-                track_max_active_requests();
                 return {{i, &requests[i]}};
             }
         }
@@ -80,93 +92,111 @@ public:
         return {};
     }
 
-    template <typename CompletionFunction>
-    void test_some(CompletionFunction&& on_complete = [](int) {}) {
+    void test_some(
+        std::invocable<int> auto&& on_complete = [](int) {},
+        CompletionStrategy completion_strategy = CompletionStrategy::all) {
         int outcount = 0;
-        max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
-        MPI_Testsome(active_range.second - active_range.first,  // count
-                     requests.data() + active_range.first,      // requests
-                     &outcount,                                 // outcount
-                     indices.data(),                            // indices
-                     MPI_STATUSES_IGNORE                        // statuses
+        auto [incount, request_ptr, index_offset] = [&]() -> std::tuple<int, MPI_Request*, int> {
+            switch (completion_strategy) {
+                case CompletionStrategy::active:
+                    return std::tuple{active_range.second - active_range.first, &requests[active_range.first],
+                                      active_range.first};
+                default:
+                case CompletionStrategy::all:
+                    return std::tuple{capacity(), requests.data(), 0};
+                case CompletionStrategy::round_robin:
+                    return std::tuple{capacity() - round_robin_index, &requests[round_robin_index], round_robin_index};
+            }
+        }();
+        MPI_Testsome(incount,             // count
+                     request_ptr,         // requests
+                     &outcount,           // outcount
+                     indices.data(),      // indices
+                     MPI_STATUSES_IGNORE  // statuses
         );
         if (outcount != MPI_UNDEFINED) {
-            auto index_offset = active_range.first;
             std::for_each_n(indices.begin(), outcount, [&](int index) {
                 // map index to the global index
                 index += index_offset;
                 remove_from_active_range(index);
-                track_max_active_requests();
                 on_complete(index);
             });
         }
+        if (completion_strategy == CompletionStrategy::round_robin) {
+            // we check the remaining requests before the round_robin_index
+            MPI_Testsome(round_robin_index,   // count
+                         requests.data(),     // requests
+                         &outcount,           // outcount
+                         indices.data(),      // indices
+                         MPI_STATUSES_IGNORE  // statuses
+            );
+            if (outcount != MPI_UNDEFINED) {
+                std::for_each_n(indices.begin(), outcount, [&](int index) {
+                    remove_from_active_range(index);
+                    on_complete(index);
+                });
+            }
+            round_robin_index++;
+            if (round_robin_index == capacity()) {
+                round_robin_index = 0;
+            }
+        }
     }
 
-    int round_robin_index = 0;
-
-    template <typename CompletionFunction>
-    bool test_any(CompletionFunction&& on_complete = [](int) {}) {
+    bool test_any(
+        std::invocable<int> auto&& on_complete = [](int) {},
+        CompletionStrategy completion_strategy = CompletionStrategy::all) {
         int flag = 0;
         int index = 0;
-        max_test_size_ = std::max(max_test_size_, active_range.second - active_range.first);
-        MPI_Testany(capacity(),        // - round_robin_index,
-                                       // active_range.second - active_range.first,  // count
-                    requests.data(),   // + round_robin_index,      // requests
+        auto [incount, request_ptr, index_offset] = [&]() -> std::tuple<int, MPI_Request*, int> {
+            switch (completion_strategy) {
+                case CompletionStrategy::active:
+                    return std::tuple{active_range.second - active_range.first, &requests[active_range.first],
+                                      active_range.first};
+                default:
+                case CompletionStrategy::all:
+                    return std::tuple{capacity(), requests.data(), 0};
+                case CompletionStrategy::round_robin:
+                    return std::tuple{capacity() - round_robin_index, &requests[round_robin_index], round_robin_index};
+            }
+        }();
+        MPI_Testany(incount,           // count
+                    request_ptr,       // requests
                     &index,            // index
                     &flag,             // flag
                     MPI_STATUS_IGNORE  // status
         );
         if (flag && index != MPI_UNDEFINED) {
-            // index += round_robin_index;
+            index += index_offset;
             remove_from_active_range(index);
-            track_max_active_requests();
             on_complete(index);
-        }  // else {
-        //   MPI_Testany(round_robin_index,
-        // 	      requests.data(),
-        // 	      &index,
-        // 	      &flag,
-        // 	      MPI_STATUS_IGNORE
-        // 	      );
-        //   if (flag && index != MPI_UNDEFINED) {
-        //     // index += round_robin_index;
-        //     remove_from_active_range(index);
-        //     track_max_active_requests();
-        //     on_complete(index);
-        //   }
-        // }
-        // round_robin_index++;
-        // if (round_robin_index == capacity()) {
-        //   round_robin_index = 0;
-        // }
+        } else if (completion_strategy == CompletionStrategy::round_robin) {
+            MPI_Testany(round_robin_index, requests.data(), &index, &flag, MPI_STATUS_IGNORE);
+            if (flag && index != MPI_UNDEFINED) {
+                remove_from_active_range(index);
+                on_complete(index);
+            }
+            round_robin_index++;
+            if (round_robin_index == capacity()) {
+                round_robin_index = 0;
+            }
+        }
         return static_cast<bool>(flag);
     }
 
-    std::size_t active_requests() const {
+    [[nodiscard]] std::size_t active_requests() const {
         return active_requests_;
     }
 
-    std::size_t inactive_requests() const {
+    [[nodiscard]] std::size_t inactive_requests() const {
         return capacity() - active_requests();
     }
 
-    std::size_t capacity() const {
+    [[nodiscard]] std::size_t capacity() const {
         return requests.size();
     }
 
-    int max_test_size() const {
-        return max_test_size_;
-    }
-
-    size_t max_active_requests() const {
-        return max_active_requests_;
-    }
-
 private:
-    void track_max_active_requests() {
-        max_active_requests_ = std::max(max_active_requests_, active_requests());
-    }
-
     void add_to_active_range(int index) {
         active_requests_++;
         active_range.first = std::min(index, active_range.first);
@@ -190,7 +220,6 @@ private:
     size_t inactive_request_pointer = 0;
     size_t active_requests_ = 0;
     std::pair<int, int> active_range = {0, 0};
-    int max_test_size_ = 0;
-    std::size_t max_active_requests_ = 0;
+    int round_robin_index = 0;
 };
 }  // namespace message_queue::internal
