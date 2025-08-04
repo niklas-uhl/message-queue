@@ -21,7 +21,6 @@
 
 #include <mpi.h>
 #include <algorithm>
-#include <chrono>
 #include <concepts>
 #include <cstddef>
 #include <deque>
@@ -30,7 +29,6 @@
 #include <kassert/kassert.hpp>
 #include <limits>
 #include <optional>
-#include <ranges>  // IWYU pragma: keep
 #include <span>
 #include <utility>
 #include <vector>
