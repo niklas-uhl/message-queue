@@ -44,10 +44,11 @@ enum class FlushStrategy : std::uint8_t { local, global, random, largest };
 
 struct Config {
     size_t num_request_slots = DEFAULT_NUM_REQUEST_SLOTS;
+    size_t max_num_send_buffers = 2 * DEFAULT_NUM_REQUEST_SLOTS;
     ReceiveMode receive_mode = ReceiveMode::persistent;
     FlushStrategy flush_strategy = FlushStrategy::local;
-    // size_t global_threshold_bytes = std::numeric_limits<size_t>::max();
-    std::size_t local_threshold_bytes = std::numeric_limits<size_t>::max();
+    size_t global_threshold_bytes = std::numeric_limits<size_t>::max();
+    std::size_t local_threshold_bytes = DEFAULT_BUFFER_THRESHOLD;
 };
 
 template <typename MessageType,
@@ -58,10 +59,6 @@ template <typename MessageType,
           aggregation::Splitter<MessageType, BufferContainer> Splitter = aggregation::NoSplitter,
           aggregation::BufferCleaner<BufferContainer> BufferCleaner = aggregation::NoOpCleaner>
 class BufferedMessageQueue {
-private:
-    using BufferMap = std::unordered_map<PEID, BufferContainer>;
-    using BufferList = std::vector<BufferContainer>;
-
 public:
     using message_type = MessageType;
     using buffer_type = BufferType;
@@ -75,104 +72,22 @@ public:
                          Merger merger = Merger{},
                          Splitter splitter = Splitter{},
                          BufferCleaner cleaner = BufferCleaner{})
-        : queue_(comm,
-                 config.num_request_slots,
-                 config.local_threshold_bytes == std::numeric_limits<std::size_t>::max()
-                     ? 0
-                     : config.local_threshold_bytes / sizeof(BufferType),
-                 config.receive_mode),
-          in_transit_buffers_(config.num_request_slots),
-          available_in_transit_slots_(in_transit_buffers_.size()),
+        : queue_(comm, config.num_request_slots, compute_buffer_size(config), config.receive_mode),
+          local_threshold_bytes_(config.local_threshold_bytes),
+          global_threshold_bytes_(config.global_threshold_bytes),
+          max_num_send_buffers_(config.max_num_send_buffers),
+          flush_strategy_(config.flush_strategy),
           merge(std::move(merger)),
           split(std::move(splitter)),
-          pre_send_cleanup(std::move(cleaner)) {}
+          pre_send_cleanup(std::move(cleaner)) {
+        reserve_send_buffers(config.num_request_slots);
+    }
 
+    ~BufferedMessageQueue() = default;
     BufferedMessageQueue(BufferedMessageQueue&&) = default;
     BufferedMessageQueue(BufferedMessageQueue const&) = delete;
     BufferedMessageQueue& operator=(BufferedMessageQueue&&) = default;
     BufferedMessageQueue& operator=(BufferedMessageQueue const&) = delete;
-
-    [[nodiscard]] auto num_send_buffers() const -> std::size_t {
-        return num_send_buffers_;
-    }
-
-    void max_num_send_buffers(std::size_t num_buffers) {
-        max_num_send_buffers_ = num_buffers;
-    }
-
-    void reserve_send_buffers(std::size_t num_buffers) {
-        auto buffer_size = local_threshold();
-        if (buffer_size == std::numeric_limits<size_t>::max()) {
-            buffer_size = 0;
-        }
-        reserve_send_buffers(num_buffers, buffer_size);
-    }
-
-    void reserve_send_buffers(std::size_t num_buffers, std::size_t buffer_size) {
-        if (num_send_buffers() + num_buffers > max_num_send_buffers_) {
-            throw std::runtime_error("Exceeded maximum number of send buffers.");
-        }
-        auto old_size = buffer_free_list_.size();
-        buffer_free_list_.resize(old_size + num_buffers);
-        for (auto& buf : std::ranges::subrange(buffer_free_list_.begin() + old_size, buffer_free_list_.end())) {
-            num_send_buffers_++;
-            buf.reserve(buffer_size);
-        }
-    }
-
-    auto get_some_free_buffer() -> std::optional<BufferContainer> {
-        if (buffer_free_list_.empty()) {
-            if (num_send_buffers_ < max_num_send_buffers_) {
-                reserve_send_buffers(1);
-            } else {
-                if (buffers_.size() - 1 >= max_num_send_buffers_ /* minus the buffer we try to create */) {
-                    flush_largest_buffer();
-                }
-                return std::nullopt;
-            }
-        }
-        KASSERT(!buffer_free_list_.empty());
-        auto buffer = std::move(buffer_free_list_.back());
-        return buffer;
-    };
-
-    /// Note: messages have to be passed as rvalues. If you want to send static
-    /// data without an additional copy, wrap it in a std::ranges::ref_view.
-    bool post_message_impl(InputMessageRange<MessageType> auto&& message,
-                           PEID receiver,
-                           PEID envelope_sender,
-                           PEID envelope_receiver,
-                           int tag,
-                           OverflowHandler<BufferMap> auto&& handle_overflow,
-                           BufferProvider<BufferContainer> auto&& get_new_buffer) {
-        auto it = buffers_.find(receiver);
-        if (it == buffers_.end()) {
-            auto buffer = get_new_buffer();
-            std::tie(it, std::ignore) = buffers_.emplace(receiver, std::move(buffer));
-        }
-
-        auto& buffer = it->second;
-        auto envelope =
-            MessageEnvelope{std::forward<decltype(message)>(message), envelope_sender, envelope_receiver, tag};
-        size_t estimated_new_buffer_size = 0;
-        if constexpr (aggregation::EstimatingMerger<Merger, MessageType, BufferContainer>) {
-            estimated_new_buffer_size = merge.estimate_new_buffer_size(buffer, receiver, queue_.rank(), envelope);
-        } else {
-            estimated_new_buffer_size = buffer.size() + envelope.message.size();
-        }
-        auto old_buffer_size = buffer.size();
-        bool overflow = false;
-        if (check_for_buffer_overflow(buffer, estimated_new_buffer_size - old_buffer_size)) {
-            overflow = true;
-            handle_overflow(it);  // customization point
-            buffer = get_new_buffer();
-        }
-        PEID rank = 0;
-        merge(buffer, receiver, queue_.rank(), std::move(envelope));
-        auto new_buffer_size = buffer.size();
-        global_buffer_size_ += new_buffer_size - old_buffer_size;
-        return overflow;
-    }
 
     /// Post a message to the queue. This operation never fails, but this requires to busily wait for completion of
     /// other send/receives until slots or buffers become available. Therefore, you also have to pass a message handler.
@@ -288,26 +203,6 @@ public:
 
     void flush_all_buffers() {
         flush_all_buffers_impl(buffers_.end(), [] {}, [] { return false; });
-    }
-
-    void flush_all_buffers_and_poll_until_reactivated(MessageHandler<MessageType> auto&& on_message) {
-        flush_all_buffers_impl(
-            buffers_.end(),
-            [&] {  // pre_flush_hook
-                while (true) {
-                    auto res = poll(std::forward<decltype(on_message)>(on_message));
-                    if (res && res->first) {
-                        break;
-                    }
-                }
-            },
-            [&](bool current_flush_successful) {  // post flush_hook
-                if (!current_flush_successful) {
-                    poll(std::forward<decltype(on_message)>(on_message));
-                }
-                return termination_state() == TerminationState::active;
-            },
-            false);
     }
 
     void flush_largest_buffer() {
@@ -432,10 +327,6 @@ public:
         return local_threshold_bytes_ / sizeof(BufferType);
     }
 
-    void flush_strategy(FlushStrategy strategy) {
-        flush_strategy_ = strategy;
-    }
-
     [[nodiscard]] PEID rank() const {
         return queue_.rank();
     }
@@ -459,6 +350,114 @@ public:
     }
 
 private:
+    using BufferMap = std::unordered_map<PEID, BufferContainer>;
+    using BufferList = std::vector<BufferContainer>;
+
+    static std::size_t compute_buffer_size(Config const& config) {
+        if (config.local_threshold_bytes != std::numeric_limits<std::size_t>::max()) {
+            return (config.local_threshold_bytes + sizeof(BufferType) - 1) / sizeof(BufferType);
+        }
+        if (config.global_threshold_bytes == std::numeric_limits<std::size_t>::max()) {
+            return 0;
+        }
+        auto bytes_per_buffer = 2 * (config.global_threshold_bytes / config.num_request_slots);
+        return (bytes_per_buffer + sizeof(BufferType) - 1) / sizeof(BufferType);
+    }
+
+    void reserve_send_buffers(std::size_t num_buffers) {
+        auto buffer_size = queue_.reserved_receive_buffer_size();
+        reserve_send_buffers(num_buffers, buffer_size);
+    }
+
+    void reserve_send_buffers(std::size_t num_buffers, std::size_t buffer_size) {
+        if (num_send_buffers_ + num_buffers > max_num_send_buffers_) {
+            throw std::runtime_error("Exceeded maximum number of send buffers.");
+        }
+        auto old_size = buffer_free_list_.size();
+        buffer_free_list_.resize(old_size + num_buffers);
+        for (auto& buf : std::ranges::subrange(buffer_free_list_.begin() + old_size, buffer_free_list_.end())) {
+            num_send_buffers_++;
+            buf.reserve(buffer_size);
+        }
+    }
+
+    auto get_some_free_buffer() -> std::optional<BufferContainer> {
+        if (buffer_free_list_.empty()) {
+            if (num_send_buffers_ < max_num_send_buffers_) {
+                reserve_send_buffers(1);
+            } else {
+                // Heuristic: at quota with no free buffer → flush one.
+                // It won’t free capacity immediately, but once the send
+                // completes the buffer will be recycled via recover_buffer
+                if (buffers_.size() - 1 >= max_num_send_buffers_ /* minus the buffer we try to create */) {
+                    flush_largest_buffer();
+                }
+                return std::nullopt;
+            }
+        }
+        KASSERT(!buffer_free_list_.empty());
+        auto buffer = std::move(buffer_free_list_.back());
+        return buffer;
+    };
+
+    /// Note: messages have to be passed as rvalues. If you want to send static
+    /// data without an additional copy, wrap it in a std::ranges::ref_view.
+    bool post_message_impl(InputMessageRange<MessageType> auto&& message,
+                           PEID receiver,
+                           PEID envelope_sender,
+                           PEID envelope_receiver,
+                           int tag,
+                           OverflowHandler<BufferMap> auto&& handle_overflow,
+                           BufferProvider<BufferContainer> auto&& get_new_buffer) {
+        auto it = buffers_.find(receiver);
+        if (it == buffers_.end()) {
+            auto buffer = get_new_buffer();
+            std::tie(it, std::ignore) = buffers_.emplace(receiver, std::move(buffer));
+        }
+
+        auto& buffer = it->second;
+        auto envelope =
+            MessageEnvelope{std::forward<decltype(message)>(message), envelope_sender, envelope_receiver, tag};
+        size_t estimated_new_buffer_size = 0;
+        if constexpr (aggregation::EstimatingMerger<Merger, MessageType, BufferContainer>) {
+            estimated_new_buffer_size = merge.estimate_new_buffer_size(buffer, receiver, queue_.rank(), envelope);
+        } else {
+            estimated_new_buffer_size = buffer.size() + envelope.message.size();
+        }
+        auto old_buffer_size = buffer.size();
+        bool overflow = false;
+        if (check_for_buffer_overflow(buffer, estimated_new_buffer_size - old_buffer_size)) {
+            overflow = true;
+            handle_overflow(it);  // customization point
+            buffer = get_new_buffer();
+        }
+        PEID rank = 0;
+        merge(buffer, receiver, queue_.rank(), std::move(envelope));
+        auto new_buffer_size = buffer.size();
+        global_buffer_size_ += new_buffer_size - old_buffer_size;
+        return overflow;
+    }
+
+    void flush_all_buffers_and_poll_until_reactivated(MessageHandler<MessageType> auto&& on_message) {
+        flush_all_buffers_impl(
+            buffers_.end(),
+            [&] {  // pre_flush_hook
+                while (true) {
+                    auto res = poll(std::forward<decltype(on_message)>(on_message));
+                    if (res && res->first) {
+                        break;
+                    }
+                }
+            },
+            [&](bool current_flush_successful) {  // post flush_hook
+                if (!current_flush_successful) {
+                    poll(std::forward<decltype(on_message)>(on_message));
+                }
+                return termination_state() == TerminationState::active;
+            },
+            false);
+    }
+
     /// @return an iterator to the next buffer, or the input iterator if flushing failed
     auto flush_buffer_impl(BufferMap::iterator buffer_it, bool erase = true) -> BufferMap::iterator {
         KASSERT(buffer_it != buffers_.end(), "Trying to flush non-existing buffer.");
@@ -597,15 +596,13 @@ private:
     BufferMap buffers_;
     BufferList buffer_free_list_;
     std::size_t num_send_buffers_ = 0;
-    std::size_t max_num_send_buffers_ = std::numeric_limits<std::size_t>::max();
-    std::vector<std::optional<std::pair<std::size_t, BufferContainer>>> in_transit_buffers_;
-    std::size_t available_in_transit_slots_;
+    std::size_t max_num_send_buffers_;
     Merger merge;
     Splitter split;
     BufferCleaner pre_send_cleanup;
     size_t global_buffer_size_ = 0;
-    size_t global_threshold_bytes_ = std::numeric_limits<size_t>::max();
-    size_t local_threshold_bytes_ = std::numeric_limits<size_t>::max();
-    FlushStrategy flush_strategy_ = FlushStrategy::local;
+    size_t global_threshold_bytes_;
+    size_t local_threshold_bytes_;
+    FlushStrategy flush_strategy_;
 };
 }  // namespace message_queue

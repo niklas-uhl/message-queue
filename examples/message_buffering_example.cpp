@@ -76,7 +76,7 @@ auto main(int argc, char* argv[]) -> int {
         std::print("Preparing buffer {} to {}.\n", buf, receiver);
     };
     {
-        auto queue =
+      auto queue =
             message_queue::BufferedMessageQueueBuilder<int>().with_buffer_cleaner(std::move(printing_cleaner)).build();
 
         queue.synchronous_mode();
@@ -91,7 +91,6 @@ auto main(int argc, char* argv[]) -> int {
         if (local_threshold != std::numeric_limits<size_t>::max()) {
             queue.local_threshold(local_threshold);
         }
-        queue.flush_strategy(flush_strategy);
         for (auto i = 0; i < number_of_messages; ++i) {
             int val = dist(gen);
             queue.post_message(val, val);

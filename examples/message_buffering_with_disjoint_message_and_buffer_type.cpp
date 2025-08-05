@@ -101,7 +101,6 @@ auto main(int argc, char* argv[]) -> int {
         if (local_threshold != std::numeric_limits<size_t>::max()) {
             queue.local_threshold(local_threshold);
         }
-        queue.flush_strategy(flush_strategy);
         for (auto i = 0; i < number_of_messages; ++i) {
             int destination = dist(gen);
             int message_size = message_size_dist(gen);
