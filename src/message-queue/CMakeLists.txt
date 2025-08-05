@@ -13,5 +13,5 @@ target_sources(
   message_handles.hpp
   termination_counter.hpp
   fixed_size_buffer.hpp
-  
+  grid_indirection.hpp
 )

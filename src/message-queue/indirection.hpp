@@ -20,7 +20,6 @@
 #pragma once
 
 #include <mpi.h>
-#include <cmath>
 #include <kassert/kassert.hpp>
 #include "message-queue/concepts.hpp"  // IWYU pragma: keep
 #include "message-queue/definitions.hpp"
@@ -30,75 +29,9 @@
 namespace message_queue {
 template <typename T>
 concept IndirectionScheme = requires(T scheme, MPI_Comm comm, PEID sender, PEID receiver) {
-    // { T{comm} };
     { scheme.next_hop(sender, receiver) } -> std::same_as<PEID>;
     { scheme.should_redirect(sender, receiver) } -> std::same_as<bool>;
 };
-
-class GridIndirectionScheme {
-public:
-    GridIndirectionScheme(MPI_Comm comm) : comm_(comm), grid_size_(std::round(std::sqrt(size()))) {
-        MPI_Comm_rank(comm_, &my_rank_);
-        MPI_Comm_size(comm_, &my_size_);
-    }
-
-    PEID next_hop(PEID sender, PEID receiver) const {
-        auto proxy = get_proxy(rank(), receiver);
-        return proxy;
-    }
-    bool should_redirect(PEID sender, PEID receiver) const {
-        return receiver != rank();
-    }
-
-    [[nodiscard]] auto num_groups() const -> std::size_t {
-        return grid_size_;
-    }
-    [[nodiscard]] auto group_size() const -> std::size_t {
-        return grid_size_;
-    }
-
-private:
-    int rank() const {
-        return my_rank_;
-    }
-    int size() const {
-        return my_size_;
-    }
-    struct GridPosition {
-        int row;
-        int column;
-        bool operator==(const GridPosition& rhs) const {
-            return row == rhs.row && column == rhs.column;
-        }
-    };
-
-    GridPosition rank_to_grid_position(PEID mpi_rank) const {
-        return GridPosition{mpi_rank / grid_size_, mpi_rank % grid_size_};
-    }
-
-    PEID grid_position_to_rank(GridPosition grid_position) const {
-        return grid_position.row * grid_size_ + grid_position.column;
-    }
-    PEID get_proxy(PEID from, PEID to) const {
-        auto from_pos = rank_to_grid_position(from);
-        auto to_pos = rank_to_grid_position(to);
-        GridPosition proxy = {from_pos.row, to_pos.column};
-        if (grid_position_to_rank(proxy) >= size()) {
-            proxy = {from_pos.column, to_pos.column};
-        }
-        if (proxy == from_pos) {
-            proxy = to_pos;
-        }
-        KASSERT(grid_position_to_rank(proxy) < size());
-        return grid_position_to_rank(proxy);
-    }
-    MPI_Comm comm_;
-    PEID grid_size_;
-    int my_rank_;
-    int my_size_;
-};
-
-static_assert(IndirectionScheme<GridIndirectionScheme>);
 
 template <IndirectionScheme Indirector, typename BufferedQueueType>
 class IndirectionAdapter : public BufferedQueueType {
@@ -119,7 +52,7 @@ public:
     }
 
     bool post_message(InputMessageRange<MessageType> auto&& message,
-                      PEID receiver,
+                      PEID receiver,  // NOLINT(bugprone-*)
                       PEID envelope_sender,
                       PEID envelope_receiver,
                       int tag,
@@ -149,7 +82,7 @@ public:
     }
 
     bool post_message_blocking(InputMessageRange<MessageType> auto&& message,
-                               PEID receiver,
+                               PEID receiver,  // NOLINT(bugprone-*)
                                PEID envelope_sender,
                                PEID envelope_receiver,
                                int tag,
@@ -211,25 +144,14 @@ public:
 private:
     auto redirection_handler(MessageHandler<typename queue_type::message_type> auto&& on_message) {
         return [&](Envelope<typename queue_type::message_type> auto envelope) {
-            // kamping::measurements::timer().start("handler");
-            // kamping::measurements::timer().start("check_redirect");
             bool should_redirect = indirection_.should_redirect(envelope.sender, envelope.receiver);
-            // kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
-            // kamping::measurements::timer().start("handler_inner");
             if (should_redirect) {
-                // spdlog::warn("not expected to redirect anything");
                 post_message_blocking(std::move(envelope.message), envelope.receiver, envelope.sender,
                                       envelope.receiver, envelope.tag, std::forward<decltype(on_message)>(on_message));
             } else {
-                // kamping::measurements::timer().start("kassert");
                 KASSERT(envelope.receiver == this->rank());
-                // kamping::measurements::timer().stop_and_add();
-                // kamping::measurements::timer().start("ind_on_message");
                 on_message(std::move(envelope));
-                // kamping::measurements::timer().stop_and_add();
             }
-            // kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
-            // kamping::measurements::timer().stop_and_add({kamping::measurements::GlobalAggregationMode::gather});
         };
     }
     Indirector indirection_;

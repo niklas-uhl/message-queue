@@ -21,6 +21,7 @@
 #include <message-queue/concepts.hpp>
 #include <message-queue/indirection.hpp>
 #include <message-queue/queue_builder.hpp>
+#include <message-queue/grid_indirection.hpp>
 #include <print>
 #include <span>
 
