@@ -218,6 +218,14 @@ public:
         });
     }
 
+    auto poll_throttled(MessageHandler<MessageType> auto&& on_message,
+                        std::size_t poll_skip_threshold = DEFAULT_POLL_SKIP_THRESHOLD) {
+        return queue_.poll_throttled(
+            split_handler(on_message),
+            [&](std::size_t receipt, BufferContainer buffer) { recover_buffer(receipt, std::move(buffer)); },
+            poll_skip_threshold);
+    }
+
     /// Note: Message handlers take a MessageEnvelope as single argument. The Envelope
     /// (not necessarily the underlying data) is moved to the handler when
     /// called.

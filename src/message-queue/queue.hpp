@@ -39,6 +39,8 @@
 
 namespace message_queue {
 
+static constexpr std::size_t DEFAULT_POLL_SKIP_THRESHOLD = 100;
+
 enum class ReceiveMode : std::uint8_t { poll, posted_receives, persistent };
 
 enum class TerminationState : std::uint8_t { active, trying_termination, terminated };
@@ -451,6 +453,23 @@ public:
             return std::pair{send_finished_something, probe_finished_something};
         }
         return std::nullopt;
+    }
+
+    auto poll_throttled(MessageHandler<T, MessageContainer> auto&& on_message,
+                        SendFinishedCallback<MessageContainer> auto&& on_finished_sending,
+                        std::size_t poll_skip_threshold = DEFAULT_POLL_SKIP_THRESHOLD) -> std::optional<std::pair<bool, bool>> {
+        static std::size_t poll_count = 0;
+        if (poll_count % poll_skip_threshold == 0) {
+            poll_count++;
+            return poll(std::forward<decltype(on_message)>(on_message),
+                        std::forward<decltype(on_finished_sending)>(on_finished_sending));
+        }
+        return std::nullopt;
+    }
+
+    auto poll_throttled(MessageHandler<T, MessageContainer> auto&& on_message,
+                        std::size_t poll_skip_threshold = DEFAULT_POLL_SKIP_THRESHOLD) {
+        return poll_throttled(std::forward<decltype(on_message)>(on_message), [](std::size_t) {}, poll_skip_threshold);
     }
 
     void reactivate() {
