@@ -53,15 +53,15 @@ class MessageQueue {
 public:
     MessageQueue(MPI_Comm comm, size_t num_request_slots, size_t reserved_receive_buffer_size, ReceiveMode receive_mode)
 
-        : outgoing_message_box(),
+        : outgoing_message_box_(),
           request_pool(num_request_slots),
-          in_transit_messages(num_request_slots),
-          messages_to_receive(),
+          in_transit_messages_(num_request_slots),
+          messages_to_receive_(),
           reserved_receive_buffer_size_(reserved_receive_buffer_size),
-          receive_buffers(num_request_slots),
-          receive_requests(num_request_slots, MPI_REQUEST_NULL),
-          indices(num_request_slots),
-          statuses(num_request_slots),
+          receive_buffers_(num_request_slots),
+          receive_requests_(num_request_slots, MPI_REQUEST_NULL),
+          indices_(num_request_slots),
+          statuses_(num_request_slots),
           termination_(comm),
           comm_(comm),
           receive_mode_(receive_mode) {
@@ -77,19 +77,19 @@ public:
     MessageQueue(MessageQueue&&) = default;
     MessageQueue(MessageQueue const&) = delete;
     MessageQueue& operator=(MessageQueue&& other) {
-        for (size_t i = 0; i < receive_requests.size(); i++) {
+        for (size_t i = 0; i < receive_requests_.size(); i++) {
             cancel_receive(i);
         }
 
-        this->outgoing_message_box = std::move(other.outgoing_message_box);
+        this->outgoing_message_box_ = std::move(other.outgoing_message_box_);
         this->request_pool = std::move(other.request_pool);
-        this->in_transit_messages = other.in_transit_messages;
-        this->messages_to_receive = std::move(other.messages_to_receive);
+        this->in_transit_messages_ = other.in_transit_messages_;
+        this->messages_to_receive_ = std::move(other.messages_to_receive_);
         this->reserved_receive_buffer_size_ = other.reserved_receive_buffer_size_;
-        this->receive_buffers = std::move(other.receive_buffers);
-        this->receive_requests = std::move(other.receive_requests);
-        this->indices = std::move(other.indices);
-        this->statuses = std::move(other.statuses);
+        this->receive_buffers_ = std::move(other.receive_buffers_);
+        this->receive_requests_ = std::move(other.receive_requests_);
+        this->indices_ = std::move(other.indices_);
+        this->statuses_ = std::move(other.statuses_);
         this->request_id_ = other.request_id_;
         this->comm_ = other.comm_;
         this->rank_ = other.rank_;
@@ -110,7 +110,7 @@ public:
         if (receive_mode_ == ReceiveMode::poll) {
             return;
         }
-        for (size_t i = 0; i < receive_requests.size(); i++) {
+        for (size_t i = 0; i < receive_requests_.size(); i++) {
             cancel_receive(i);
         }
     }
@@ -157,7 +157,7 @@ public:
         handle.set_receiver(receiver);
         handle.set_request_id(this->request_id_);
 
-        if (outgoing_message_box.empty() && empty_send_slots() > 0) {
+        if (outgoing_message_box_.empty() && empty_send_slots() > 0) {
             // we can try to send directly
             auto returned_handle = try_send_something(-1, std::move(handle));
             KASSERT(!returned_handle.has_value(),
@@ -169,11 +169,11 @@ public:
         }
         // try appending to the message box
         try_send_something_from_message_box();  // ensure that we don't "waste" an empty slot
-        if (outgoing_message_box.size() >= message_box_capacity_) {
+        if (outgoing_message_box_.size() >= message_box_capacity_) {
             // the message box is full
             return std::nullopt;
         }
-        outgoing_message_box.emplace_back(std::move(handle));
+        outgoing_message_box_.emplace_back(std::move(handle));
         auto receipt = std::optional{this->request_id_};
         this->request_id_++;
         try_send_something_from_message_box();
@@ -298,9 +298,9 @@ public:
         constexpr bool move_back_message = std::invocable<decltype(on_finished_sending), std::size_t, MessageContainer>;
         // check for finished sends and try starting new ones
         return request_pool.test_any([&](int completed_request_index) {
-            std::size_t request_id = in_transit_messages[completed_request_index].get_request_id();
-            auto message = in_transit_messages[completed_request_index].extract_message();
-            in_transit_messages[completed_request_index].emplace({comm_});
+            std::size_t request_id = in_transit_messages_[completed_request_index].get_request_id();
+            auto message = in_transit_messages_[completed_request_index].extract_message();
+            in_transit_messages_[completed_request_index].emplace({comm_});
             if constexpr (move_back_message) {
                 on_finished_sending(request_id, std::move(message));
             } else {
@@ -335,15 +335,15 @@ public:
 
 private:
     bool try_send_something_from_message_box(int hint = -1) {
-        if (outgoing_message_box.empty()) {
+        if (outgoing_message_box_.empty()) {
             return false;
         }
-        internal::handles::SendHandle<T, MessageContainer>& message_to_send = outgoing_message_box.front();
+        internal::handles::SendHandle<T, MessageContainer>& message_to_send = outgoing_message_box_.front();
         if (auto returned_handle = try_send_something(hint, std::move(message_to_send))) {
             message_to_send = std::move(*returned_handle);
             return false;
         }
-        outgoing_message_box.pop_front();
+        outgoing_message_box_.pop_front();
         return true;
     }
 
@@ -355,19 +355,19 @@ private:
 
             auto [index, req_ptr] = *result;
             message_to_send.set_request(req_ptr);
-            KASSERT(!in_transit_messages[index].message().has_value());
-            in_transit_messages[index].swap(message_to_send);
-            in_transit_messages[index].initiate_send();
+            KASSERT(!in_transit_messages_[index].message().has_value());
+            in_transit_messages_[index].swap(message_to_send);
+            in_transit_messages_[index].initiate_send();
             return std::nullopt;
         }
         return std::move(message_to_send);
     }
 
     void setup_receives() {
-        for (size_t i = 0; i < receive_buffers.size(); i++) {
-            auto& req = receive_requests[i];
+        for (size_t i = 0; i < receive_buffers_.size(); i++) {
+            auto& req = receive_requests_[i];
             cancel_receive(i);
-            auto& buf = receive_buffers[i];
+            auto& buf = receive_buffers_[i];
             buf.resize(reserved_receive_buffer_size_);
             init_receive(i);
             restart_receive(i);
@@ -379,8 +379,8 @@ private:
             case ReceiveMode::posted_receives:
                 return;
             case ReceiveMode::persistent:
-                auto& buf = receive_buffers[index];
-                auto& req = receive_requests[index];
+                auto& buf = receive_buffers_[index];
+                auto& req = receive_requests_[index];
                 MPI_Recv_init(buf.data(), reserved_receive_buffer_size_, kamping::mpi_datatype<T>(), MPI_ANY_SOURCE,
                               SMALL_MESSAGE_TAG, comm_, &req);
                 return;
@@ -388,8 +388,8 @@ private:
     }
 
     void restart_receive(size_t index) {
-        auto& req = receive_requests[index];
-        auto& buf = receive_buffers[index];
+        auto& req = receive_requests_[index];
+        auto& buf = receive_buffers_[index];
         switch (receive_mode_) {
             case ReceiveMode::poll:
                 return;
@@ -407,7 +407,7 @@ private:
         if (receive_mode_ == ReceiveMode::poll) {
             return;
         }
-        auto& req = receive_requests[index];
+        auto& req = receive_requests_[index];
         if (req != MPI_REQUEST_NULL) {
             MPI_Cancel(&req);
             if (receive_mode_ == ReceiveMode::persistent) {
@@ -460,7 +460,7 @@ private:
         if (message_box_capacity_ == std::numeric_limits<std::size_t>::max()) {
             return std::numeric_limits<std::size_t>::max();
         }
-        return message_box_capacity_ - outgoing_message_box.size();
+        return message_box_capacity_ - outgoing_message_box_.size();
     }
 
     bool probe_for_messages_persistent(MessageHandler<T, std::span<T>> auto&& on_message) {
@@ -474,16 +474,16 @@ private:
         // The array may contain null or inactive handles. If the array contains no active handles
         // then the call returns immediately with flag = true, index = MPI_UNDEFINED, and an empty
         // status.
-        int err = MPI_Testany(static_cast<int>(receive_requests.size()), receive_requests.data(), indices.data(),
-                              &request_completed, statuses.data());
+        int err = MPI_Testany(static_cast<int>(receive_requests_.size()), receive_requests_.data(), indices_.data(),
+                              &request_completed, statuses_.data());
         if (request_completed) {
-            KASSERT(indices[0] != MPI_UNDEFINED,
+            KASSERT(indices_[0] != MPI_UNDEFINED,
                     "This should not happen, because we always have pending receive requests.");
             something_happenend = true;
             termination_.track_receive();
-            auto request_index = indices[0];
-            auto& status = statuses[0];
-            auto& buffer = receive_buffers[request_index];
+            auto request_index = indices_[0];
+            auto& status = statuses_[0];
+            auto& buffer = receive_buffers_[request_index];
             int count = 0;
             MPI_Get_count(&status, kamping::mpi_datatype<T>(), &count);
             auto message = std::span(buffer).first(count);
@@ -505,26 +505,26 @@ private:
 
         size_t num_recv_requests = 0;
         auto receive_chunk = [&] {
-            MPI_Waitall(static_cast<int>(num_recv_requests), receive_requests.data(), MPI_STATUSES_IGNORE);
+            MPI_Waitall(static_cast<int>(num_recv_requests), receive_requests_.data(), MPI_STATUSES_IGNORE);
 
-            for (size_t i = 0; i < messages_to_receive.size(); i++) {
-                auto& handle = messages_to_receive[i];
-                auto& buffer = receive_buffers[i];
+            for (size_t i = 0; i < messages_to_receive_.size(); i++) {
+                auto& handle = messages_to_receive_[i];
+                auto& buffer = receive_buffers_[i];
                 termination_.track_receive();
                 auto message = std::span(buffer).first(handle.message_size());
                 on_message(MessageEnvelope{std::move(message), handle.sender(), rank_, handle.tag()});
             }
-            messages_to_receive.clear();
+            messages_to_receive_.clear();
         };
         size_t rounds = 0;
         while (auto probe_result = internal::handles::probe(comm_, MPI_ANY_SOURCE, SMALL_MESSAGE_TAG)) {
             something_happenend = true;
             auto recv_handle = probe_result->template handle<T, ReceiveBufferContainer>();
-            recv_handle.set_request(&receive_requests[num_recv_requests]);
-            recv_handle.start_receive_into(receive_buffers[num_recv_requests]);
-            messages_to_receive.emplace_back(std::move(recv_handle));
+            recv_handle.set_request(&receive_requests_[num_recv_requests]);
+            recv_handle.start_receive_into(receive_buffers_[num_recv_requests]);
+            messages_to_receive_.emplace_back(std::move(recv_handle));
             num_recv_requests++;
-            if (num_recv_requests >= receive_requests.size()) {
+            if (num_recv_requests >= receive_requests_.size()) {
                 receive_chunk();
                 num_recv_requests = 0;
             }
@@ -556,7 +556,7 @@ private:
         MessageHandler<T, MessageContainer> auto&& on_message,
         SendFinishedCallback<MessageContainer> auto&& on_finished_sending,
         std::predicate<> auto&& should_stop_polling = [] { return false; }) {
-        while (!outgoing_message_box.empty()) {
+        while (!outgoing_message_box_.empty()) {
             poll(std::forward<decltype(on_message)>(on_message),
                  std::forward<decltype(on_finished_sending)>(on_finished_sending));
             if (should_stop_polling()) {
@@ -565,16 +565,16 @@ private:
         }
     }
 
-    std::deque<internal::handles::SendHandle<T, MessageContainer>> outgoing_message_box;
+    std::deque<internal::handles::SendHandle<T, MessageContainer>> outgoing_message_box_;
     std::size_t message_box_capacity_ = std::numeric_limits<size_t>::max();
     internal::RequestPool request_pool;
-    std::vector<internal::handles::SendHandle<T, MessageContainer>> in_transit_messages;
-    std::vector<internal::handles::ReceiveHandle<T, ReceiveBufferContainer>> messages_to_receive;
+    std::vector<internal::handles::SendHandle<T, MessageContainer>> in_transit_messages_;
+    std::vector<internal::handles::ReceiveHandle<T, ReceiveBufferContainer>> messages_to_receive_;
     size_t reserved_receive_buffer_size_;
-    std::vector<ReceiveBufferContainer> receive_buffers;
-    std::vector<MPI_Request> receive_requests;
-    std::vector<int> indices;
-    std::vector<MPI_Status> statuses;
+    std::vector<ReceiveBufferContainer> receive_buffers_;
+    std::vector<MPI_Request> receive_requests_;
+    std::vector<int> indices_;
+    std::vector<MPI_Status> statuses_;
     internal::TerminationCounter termination_;
     size_t request_id_ = 0;
     MPI_Comm comm_;
