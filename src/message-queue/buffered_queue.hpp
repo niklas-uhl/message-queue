@@ -24,12 +24,12 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <kassert/kassert.hpp>
 #include <limits>
 #include <ranges>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
-#include <kassert/kassert.hpp>
 
 #include "./aggregators.hpp"
 #include "./concepts.hpp"
@@ -37,14 +37,15 @@
 
 namespace message_queue {
 
-static const std::size_t DEFAULT_NUM_REQUEST_SLOTS = 8;
+static constexpr std::size_t DEFAULT_NUM_REQUEST_SLOTS = 8;
+static constexpr std::size_t DEFAULT_BUFFER_THRESHOLD = 32ULL * 1024;
 
 enum class FlushStrategy : std::uint8_t { local, global, random, largest };
 
 struct Config {
     size_t num_request_slots = DEFAULT_NUM_REQUEST_SLOTS;
     ReceiveMode receive_mode = ReceiveMode::persistent;
-    FlushStrategy flush_strategy = FlushStrategy::global;
+    FlushStrategy flush_strategy = FlushStrategy::local;
     // size_t global_threshold_bytes = std::numeric_limits<size_t>::max();
     std::size_t local_threshold_bytes = std::numeric_limits<size_t>::max();
 };
@@ -69,40 +70,22 @@ public:
     using splitter_type = Splitter;
     using buffer_cleaner_type = BufferCleaner;
 
-    BufferedMessageQueue(MPI_Comm comm = MPI_COMM_WORLD,
-                         size_t num_request_slots = DEFAULT_NUM_REQUEST_SLOTS,
-                         ReceiveMode receive_mode = ReceiveMode::persistent,
-                         Merger merger = Merger{},
-                         Splitter splitter = Splitter{},
-                         BufferCleaner cleaner = BufferCleaner{})
-        : queue_(comm, num_request_slots, 32 * 1024 / sizeof(BufferType), receive_mode),
-          in_transit_buffers_(num_request_slots),
-          available_in_transit_slots_(in_transit_buffers_.size()),
-          merge(std::move(merger)),
-          split(std::move(splitter)),
-          pre_send_cleanup(std::move(cleaner)) {}
-
     BufferedMessageQueue(MPI_Comm comm,
-                         Config const& config,
+                         Config const config,
                          Merger merger = Merger{},
                          Splitter splitter = Splitter{},
                          BufferCleaner cleaner = BufferCleaner{})
-        : queue_(comm, config.num_request_slots, config.local_threshold_bytes, config.receive_mode),
+        : queue_(comm,
+                 config.num_request_slots,
+                 config.local_threshold_bytes == std::numeric_limits<std::size_t>::max()
+                     ? 0
+                     : config.local_threshold_bytes / sizeof(BufferType),
+                 config.receive_mode),
           in_transit_buffers_(config.num_request_slots),
           available_in_transit_slots_(in_transit_buffers_.size()),
           merge(std::move(merger)),
           split(std::move(splitter)),
           pre_send_cleanup(std::move(cleaner)) {}
-
-    // BufferedMessageQueue(MPI_Comm comm = MPI_COMM_WORLD,
-    //                      Merger merger = Merger{},
-    //                      Splitter splitter = Splitter{},
-    //                      BufferCleaner cleaner = BufferCleaner{})
-    //     : BufferedMessageQueue(comm,
-    //                            internal::comm_size(comm),
-    //                            std::move(merger),
-    //                            std::move(splitter),
-    //                            std::move(cleaner)) {}
 
     BufferedMessageQueue(BufferedMessageQueue&&) = default;
     BufferedMessageQueue(BufferedMessageQueue const&) = delete;
@@ -165,7 +148,7 @@ public:
         auto it = buffers_.find(receiver);
         if (it == buffers_.end()) {
             auto buffer = get_new_buffer();
-	    std::tie(it, std::ignore) = buffers_.emplace(receiver, std::move(buffer));
+            std::tie(it, std::ignore) = buffers_.emplace(receiver, std::move(buffer));
         }
 
         auto& buffer = it->second;
@@ -500,7 +483,7 @@ private:
         }
         auto receipt = queue_.post_message(std::move(buffer_it->second), receiver);
         KASSERT(receipt.has_value(),
-                 "We checked before that there is capacity, so posting the message should not fail.");
+                "We checked before that there is capacity, so posting the message should not fail.");
         global_buffer_size_ -= pre_cleanup_buffer_size;
         if (erase) {
             return buffers_.erase(buffer_it);
@@ -512,8 +495,8 @@ private:
     template <typename PreFlushHook, typename PostFlushHook>
         requires std::invocable<PreFlushHook> && (std::predicate<PostFlushHook> || std::predicate<PostFlushHook, bool>)
     bool flush_all_buffers_impl(BufferMap::iterator current_buffer,
-                                PreFlushHook&& pre_flush_hook,
-                                PostFlushHook&& post_flush_hook,
+                                PreFlushHook&& pre_flush_hook,    // NOLINT(cppcoreguidelines-missing-std-forward)
+                                PostFlushHook&& post_flush_hook,  // NOLINT(cppcoreguidelines-missing-std-forward)
                                 bool break_when_flush_fails = true) {
         auto it = buffers_.begin();
         bool flushed_something = false;
@@ -563,7 +546,7 @@ private:
         };
     }
 
-    auto recover_buffer(std::size_t receipt, BufferContainer&& buffer) {
+    auto recover_buffer(std::size_t /*receipt*/, BufferContainer&& buffer) {
         buffer.resize(0);  // this does not reduce the capacity
         buffer_free_list_.emplace_back(std::move(buffer));
     }
@@ -623,59 +606,6 @@ private:
     size_t global_buffer_size_ = 0;
     size_t global_threshold_bytes_ = std::numeric_limits<size_t>::max();
     size_t local_threshold_bytes_ = std::numeric_limits<size_t>::max();
-    FlushStrategy flush_strategy_ = FlushStrategy::global;
+    FlushStrategy flush_strategy_ = FlushStrategy::local;
 };
-
-template <typename MessageType,
-          MPIType BufferType = MessageType,
-          MPIBuffer BufferContainer = std::vector<BufferType>,
-          MPIBuffer<BufferType> ReceiveBufferContainer = std::vector<BufferType>,
-          aggregation::Merger<MessageType, BufferContainer> Merger = aggregation::AppendMerger,
-          aggregation::Splitter<MessageType, BufferContainer> Splitter = aggregation::NoSplitter,
-          aggregation::BufferCleaner<BufferContainer> BufferCleaner = aggregation::NoOpCleaner>
-    requires std::same_as<BufferType, std::ranges::range_value_t<BufferContainer>>
-auto make_buffered_queue(MPI_Comm comm,
-                         size_t num_request_slots = 8,
-                         ReceiveMode receive_mode = ReceiveMode::poll,
-                         Merger merger = Merger{},
-                         Splitter splitter = Splitter{},
-                         BufferCleaner cleaner = BufferCleaner{}) {
-    return BufferedMessageQueue<MessageType, BufferType, BufferContainer, ReceiveBufferContainer, Merger, Splitter,
-                                BufferCleaner>(comm, num_request_slots, receive_mode, std::move(merger),
-                                               std::move(splitter), std::move(cleaner));
-}
-
-template <typename MessageType,
-          MPIType BufferType = MessageType,
-          MPIBuffer<BufferType> BufferContainer = std::vector<BufferType>,
-          MPIBuffer<BufferType> ReceiveBufferContainer = std::vector<BufferType>,
-          aggregation::Splitter<MessageType, BufferContainer> Splitter = aggregation::NoSplitter,
-          aggregation::BufferCleaner<BufferContainer> BufferCleaner = aggregation::NoOpCleaner>
-    requires std::same_as<BufferType, std::ranges::range_value_t<BufferContainer>>
-auto make_buffered_queue(MPI_Comm comm,
-                         size_t num_request_slots = 8,
-                         ReceiveMode receive_mode = ReceiveMode::poll,
-                         Splitter splitter = Splitter{},
-                         BufferCleaner cleaner = BufferCleaner{}) {
-    return BufferedMessageQueue<MessageType, BufferType, BufferContainer, ReceiveBufferContainer,
-                                aggregation::AppendMerger, Splitter, BufferCleaner>(
-        comm, num_request_slots, receive_mode, aggregation::AppendMerger{}, std::move(splitter), std::move(cleaner));
-}
-
-template <typename MessageType,
-          MPIType BufferType = MessageType,
-          MPIBuffer<BufferType> BufferContainer = std::vector<BufferType>,
-          MPIBuffer<BufferType> ReceiveBufferContainer = std::vector<BufferType>,
-          aggregation::BufferCleaner<BufferContainer> BufferCleaner = aggregation::NoOpCleaner>
-    requires std::same_as<BufferType, std::ranges::range_value_t<BufferContainer>>
-auto make_buffered_queue(MPI_Comm comm = MPI_COMM_WORLD,
-                         size_t num_request_slots = 8,
-                         ReceiveMode receive_mode = ReceiveMode::poll,
-                         BufferCleaner cleaner = BufferCleaner{}) {
-    return BufferedMessageQueue<MessageType, BufferType, BufferContainer, ReceiveBufferContainer,
-                                aggregation::AppendMerger, aggregation::NoSplitter, BufferCleaner>(
-        comm, num_request_slots, receive_mode, aggregation::AppendMerger{}, aggregation::NoSplitter{},
-        std::move(cleaner));
-}
-
 }  // namespace message_queue

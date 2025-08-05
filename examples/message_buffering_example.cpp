@@ -19,6 +19,7 @@
 
 #include <CLI/CLI.hpp>
 #include <message-queue/buffered_queue.hpp>
+#include <message-queue/queue_builder.hpp>
 #include <print>
 #include <random>
 
@@ -75,8 +76,9 @@ auto main(int argc, char* argv[]) -> int {
         std::print("Preparing buffer {} to {}.\n", buf, receiver);
     };
     {
-        auto queue = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, 8, message_queue::ReceiveMode::poll,
-                                                             printing_cleaner);
+        auto queue =
+            message_queue::BufferedMessageQueueBuilder<int>().with_buffer_cleaner(std::move(printing_cleaner)).build();
+
         queue.synchronous_mode();
         int rank, size;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);

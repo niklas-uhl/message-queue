@@ -20,8 +20,9 @@
 #include <message-queue/buffered_queue.hpp>
 #include <message-queue/concepts.hpp>
 #include <message-queue/indirection.hpp>
-#include <span>
+#include <message-queue/queue_builder.hpp>
 #include <print>
+#include <span>
 
 auto main() -> int {
     MPI_Init(nullptr, nullptr);
@@ -53,8 +54,10 @@ auto main() -> int {
                });
     };
     {
-        auto queue = message_queue::make_buffered_queue<int>(MPI_COMM_WORLD, 8, message_queue::ReceiveMode::poll,
-                                                             merger, splitter);
+        auto queue = message_queue::BufferedMessageQueueBuilder<int>()
+                         .with_merger(std::move(merger))
+                         .with_splitter(std::move(splitter))
+                         .build();
         queue.synchronous_mode();
         auto indirection =
             message_queue::IndirectionAdapter{std::move(queue), message_queue::GridIndirectionScheme{MPI_COMM_WORLD}};

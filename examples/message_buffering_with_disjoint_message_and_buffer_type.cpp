@@ -22,6 +22,7 @@
 #include <print>
 #include <random>
 #include <range/v3/all.hpp>
+#include "message-queue/queue_builder.hpp"
 
 std::map<std::string, message_queue::FlushStrategy> flush_strategy_map{
     {"global", message_queue::FlushStrategy::global},
@@ -82,8 +83,11 @@ auto main(int argc, char* argv[]) -> int {
         std::println("Preparing buffer {} to {}.", buf, receiver);
     };
     {
-        auto queue = message_queue::make_buffered_queue<std::pair<int, int>, int>(
-            MPI_COMM_WORLD, 8, message_queue::ReceiveMode::poll, merge, split, printing_cleaner);
+        auto queue = message_queue::BufferedMessageQueueBuilder<std::pair<int, int>>()
+                         .with_buffer_type<int>()
+                         .with_merger(std::move(merge))
+                         .with_splitter(std::move(split))
+                         .build();
         queue.synchronous_mode();
         int rank, size;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);

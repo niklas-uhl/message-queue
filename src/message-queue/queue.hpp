@@ -159,13 +159,12 @@ public:
           request_pool(num_request_slots),
           in_transit_messages(num_request_slots),
           messages_to_receive(),
-          reserved_receive_buffer_size_(
-              reserved_receive_buffer_size == std::numeric_limits<size_t>::max() ? 0 : reserved_receive_buffer_size),
+          reserved_receive_buffer_size_(reserved_receive_buffer_size),
           receive_buffers(num_request_slots),
           receive_requests(num_request_slots, MPI_REQUEST_NULL),
           indices(num_request_slots),
           statuses(num_request_slots),
-	  termination_(comm),
+          termination_(comm),
           comm_(comm),
           receive_mode_(receive_mode) {
         MPI_Comm_rank(comm_, &rank_);
@@ -289,7 +288,7 @@ public:
                     "This should always succeed since we checked for an empty slot before.");
             auto receipt = std::optional{this->request_id_};
             this->request_id_++;
-	    termination_.track_send();
+            termination_.track_send();
             return receipt;
         }
         // try appending to the message box
@@ -302,7 +301,7 @@ public:
         auto receipt = std::optional{this->request_id_};
         this->request_id_++;
         try_send_something_from_message_box();
-	termination_.track_send();
+        termination_.track_send();
         return receipt;
     }
 
@@ -345,7 +344,7 @@ public:
             KASSERT(indices[0] != MPI_UNDEFINED,
                     "This should not happen, because we always have pending receive requests.");
             something_happenend = true;
-	    termination_.track_receive();
+            termination_.track_receive();
             auto request_index = indices[0];
             auto& status = statuses[0];
             auto& buffer = receive_buffers[request_index];
@@ -375,7 +374,7 @@ public:
             for (size_t i = 0; i < messages_to_receive.size(); i++) {
                 auto& handle = messages_to_receive[i];
                 auto& buffer = receive_buffers[i];
-		termination_.track_receive();
+                termination_.track_receive();
                 auto message = std::span(buffer).first(handle.message_size());
                 on_message(MessageEnvelope{std::move(message), handle.sender(), rank_, handle.tag()});
             }
@@ -431,7 +430,7 @@ public:
             MPI_Request recv_req = MPI_REQUEST_NULL;
             recv_handle.set_request(&recv_req);
             recv_handle.receive();
-	    termination_.track_receive();
+            termination_.track_receive();
             on_message(MessageEnvelope{recv_handle.extract_message(), recv_handle.sender(), rank_, recv_handle.tag()});
             return true;
         }
@@ -506,7 +505,7 @@ public:
             if (termination_state_ == TerminationState::active) {
                 return false;
             }
-	    termination_.start_message_counting();
+            termination_.start_message_counting();
             // poll at least once, so we don't miss any messages
             // if the the message box is empty upon calling this function
             // we never get to poll if message counting finishes instantly
@@ -515,7 +514,7 @@ public:
                      std::forward<decltype(on_finished_sending)>(on_finished_sending));
                 progress_hook();
                 if (termination_state_ == TerminationState::active) {
-		  return false;
+                    return false;
                 }
             } while (!termination_.message_counting_finished());
             if (termination_.terminated()) {
@@ -542,7 +541,6 @@ public:
     void synchronous_mode(bool use_it = true) {
         synchronous_mode_ = use_it;
     }
-
 
 private:
     std::deque<internal::handles::SendHandle<T, MessageContainer>> outgoing_message_box;
