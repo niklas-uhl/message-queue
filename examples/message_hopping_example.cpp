@@ -76,8 +76,9 @@ int main(int argc, char* argv[]) {
                 std::print("Message {} from {} arrived after {} hops.\n", *(begin + 2), *begin, *(begin + 1));
             } else {
                 KASSERT(envelope.message.size() > 1);
-                envelope.message[1]++;
-                queue.post_message(std::vector(envelope.message.begin(), envelope.message.end()),
+                std::vector msg(envelope.message.begin(), envelope.message.end());
+                msg[1]++;
+                queue.post_message(std::move(msg),
                                    (rank + rank_dist(eng)) % size);
             }
         };

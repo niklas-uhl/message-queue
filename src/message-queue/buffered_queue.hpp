@@ -271,25 +271,25 @@ public:
         return queue_.probe_for_one_message(split_handler(on_message), source, tag);
     }
 
-    void global_threshold(size_t threshold) {
-        if (threshold == std::numeric_limits<size_t>::max()) {
-            global_threshold_bytes(std::numeric_limits<size_t>::max());
-        } else {
-            global_threshold_bytes(threshold * sizeof(BufferType));
-        }
-    }
+    // void global_threshold(size_t threshold) {
+    //     if (threshold == std::numeric_limits<size_t>::max()) {
+    //         global_threshold_bytes(std::numeric_limits<size_t>::max());
+    //     } else {
+    //         global_threshold_bytes(threshold * sizeof(BufferType));
+    //     }
+    // }
 
-    void global_threshold_bytes(size_t threshold) {
-        global_threshold_bytes_ = threshold;
-        if (threshold != std::numeric_limits<size_t>::max()) {
-            queue_.reserved_receive_buffer_size((threshold + sizeof(BufferType) - 1) / sizeof(BufferType));
-        } else {
-            queue_.allow_large_messages();
-        }
-        if (check_for_global_buffer_overflow(0)) {
-            flush_all_buffers();
-        }
-    }
+    // void global_threshold_bytes(size_t threshold) {
+    //     global_threshold_bytes_ = threshold;
+    //     if (threshold != std::numeric_limits<size_t>::max()) {
+    //         queue_.reserved_receive_buffer_size((threshold + sizeof(BufferType) - 1) / sizeof(BufferType));
+    //     } else {
+    //         queue_.allow_large_messages();
+    //     }
+    //     if (check_for_global_buffer_overflow(0)) {
+    //         flush_all_buffers();
+    //     }
+    // }
 
     [[nodiscard]] size_t global_threshold() const {
         if (global_threshold_bytes_ == std::numeric_limits<std::size_t>::max()) {
@@ -302,27 +302,27 @@ public:
         return global_threshold_bytes_;
     }
 
-    void local_threshold(size_t threshold) {
-        if (threshold == std::numeric_limits<size_t>::max()) {
-            local_threshold_bytes(std::numeric_limits<size_t>::max());
-        } else {
-            local_threshold_bytes(threshold * sizeof(BufferType));
-        }
-    }
+    // void local_threshold(size_t threshold) {
+    //     if (threshold == std::numeric_limits<size_t>::max()) {
+    //         local_threshold_bytes(std::numeric_limits<size_t>::max());
+    //     } else {
+    //         local_threshold_bytes(threshold * sizeof(BufferType));
+    //     }
+    // }
 
-    void local_threshold_bytes(size_t threshold) {
-        local_threshold_bytes_ = threshold;
-        if (threshold != std::numeric_limits<size_t>::max()) {
-            queue_.reserved_receive_buffer_size((threshold + sizeof(BufferType) - 1) / sizeof(BufferType));
-        } else {
-            queue_.allow_large_messages();
-        }
-        for (auto& [receiver, buffer] : buffers_) {
-            if (check_for_local_buffer_overflow(buffer, 0)) {
-                flush_buffer(receiver);
-            }
-        }
-    }
+    // void local_threshold_bytes(size_t threshold) {
+    //     local_threshold_bytes_ = threshold;
+    //     if (threshold != std::numeric_limits<size_t>::max()) {
+    //         queue_.reserved_receive_buffer_size((threshold + sizeof(BufferType) - 1) / sizeof(BufferType));
+    //     } else {
+    //         queue_.allow_large_messages();
+    //     }
+    //     for (auto& [receiver, buffer] : buffers_) {
+    //         if (check_for_local_buffer_overflow(buffer, 0)) {
+    //             flush_buffer(receiver);
+    //         }
+    //     }
+    // }
 
     [[nodiscard]] size_t local_threshold_bytes() const {
         return local_threshold_bytes_;

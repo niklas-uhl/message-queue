@@ -14,4 +14,5 @@ target_sources(
   termination_counter.hpp
   fixed_size_buffer.hpp
   grid_indirection.hpp
+  receiver.hpp
 )

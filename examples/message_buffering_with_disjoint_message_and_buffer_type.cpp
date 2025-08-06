@@ -96,10 +96,10 @@ auto main(int argc, char* argv[]) -> int {
         std::uniform_int_distribution<int> dist(0, size - 1);
         std::uniform_int_distribution<int> message_size_dist(1, 10);
         if (global_threshold != std::numeric_limits<size_t>::max()) {
-            queue.global_threshold(global_threshold);
+            // queue.global_threshold(global_threshold);
         }
         if (local_threshold != std::numeric_limits<size_t>::max()) {
-            queue.local_threshold(local_threshold);
+            // queue.local_threshold(local_threshold);
         }
         for (auto i = 0; i < number_of_messages; ++i) {
             int destination = dist(gen);

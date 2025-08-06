@@ -86,10 +86,10 @@ auto main(int argc, char* argv[]) -> int {
         std::mt19937 gen;
         std::uniform_int_distribution<int> dist(0, size - 1);
         if (global_threshold != std::numeric_limits<size_t>::max()) {
-            queue.global_threshold(global_threshold);
+            // queue.global_threshold(global_threshold);
         }
         if (local_threshold != std::numeric_limits<size_t>::max()) {
-            queue.local_threshold(local_threshold);
+            // queue.local_threshold(local_threshold);
         }
         for (auto i = 0; i < number_of_messages; ++i) {
             int val = dist(gen);
