@@ -45,9 +45,10 @@ auto build_envelope(MPIBuffer auto const& buffer, MPI_Status& status, int rank)
 }
 }  // namespace internal
 
-template <MPIType T, MPIBuffer<T> ReceiveBufferContainer = std::vector<T>>
+template <MPIBuffer ReceiveBufferContainer>
 class PersistentReceiver {
 public:
+    using value_type = std::ranges::range_value_t<ReceiveBufferContainer>;
     // NOLINTBEGIN(*-easily-swappable-parameters)
     PersistentReceiver(MPI_Comm comm,
                        int tag,
@@ -61,18 +62,17 @@ public:
           statuses_(num_receive_slots),
           indices_(num_receive_slots),
           termination_(&termination_counter) {
-        // std::cout << tag_ << "\n";
         KASSERT(tag_ < kamping::mpi_env.tag_upper_bound());
         MPI_Comm_rank(comm, &rank_);
         for (auto [request, buffer] : std::views::zip(receive_requests_, receive_buffers_)) {
             buffer.resize(reserved_receive_buffer_size);
-            MPI_Recv_init_c(buffer.data(),               // buf
-                            buffer.size(),               // count
-                            kamping::mpi_datatype<T>(),  // datatype
-                            MPI_ANY_SOURCE,              // source
-                            tag_,                        // tag
-                            comm_,                       // comm
-                            &request                     // request
+            MPI_Recv_init_c(buffer.data(),                        // buf
+                            buffer.size(),                        // count
+                            kamping::mpi_datatype<value_type>(),  // datatype
+                            MPI_ANY_SOURCE,                       // source
+                            tag_,                                 // tag
+                            comm_,                                // comm
+                            &request                              // request
             );
             MPI_Start(&request);
         }
@@ -118,7 +118,7 @@ public:
         other.termination_ = nullptr;
     }
 
-    bool probe_for_one_message(MessageHandler<T, std::span<T>> auto&& on_message) {
+    bool probe_for_one_message(MessageHandler<value_type, std::span<value_type>> auto&& on_message) {
         int& index = indices_[0];
         int request_completed = 0;
         MPI_Status& status = statuses_[0];
@@ -139,7 +139,7 @@ public:
         return true;
     }
 
-    bool probe_for_messages(MessageHandler<T, std::span<T>> auto&& on_message) {
+    bool probe_for_messages(MessageHandler<value_type, std::span<value_type>> auto&& on_message) {
         int num_completed = 0;
         MPI_Status* status = statuses_.data();
         MPI_Testsome(static_cast<int>(receive_requests_.size()),  // count
@@ -166,7 +166,7 @@ public:
         return true;
     }
 
-    void resize_buffers(std::size_t new_size, MessageHandler<T, std::span<T>> auto&& on_message) {
+    void resize_buffers(std::size_t new_size, MessageHandler<value_type, std::span<value_type>> auto&& on_message) {
         std::vector<MPI_Status> statuses(receive_requests_.size());
         for (MPI_Request& request : receive_requests_) {
             MPI_Cancel(&request);
@@ -182,13 +182,13 @@ public:
             }
             MPI_Request_free(&request);
             buffer.resize(new_size);
-            MPI_Recv_init_c(buffer.data(),               // buf
-                            buffer.size(),               // count
-                            kamping::mpi_datatype<T>(),  // datatype
-                            MPI_ANY_SOURCE,              // source
-                            tag_,                        // tag
-                            comm_,                       // comm
-                            &request                     // request
+            MPI_Recv_init_c(buffer.data(),                        // buf
+                            buffer.size(),                        // count
+                            kamping::mpi_datatype<value_type>(),  // datatype
+                            MPI_ANY_SOURCE,                       // source
+                            tag_,                                 // tag
+                            comm_,                                // comm
+                            &request                              // request
             );
         }
     }
@@ -208,9 +208,10 @@ private:
     int rank_ = 0;
 };
 
-template <MPIType T, MPIBuffer<T> ReceiveBufferContainer = std::vector<T>>
+template <MPIBuffer ReceiveBufferContainer>
 class ProbeReceiver {
 public:
+    using value_type = std::ranges::range_value_t<ReceiveBufferContainer>;
     // NOLINTBEGIN(*-easily-swappable-parameters)
     ProbeReceiver(MPI_Comm comm,
                   int tag,
@@ -229,7 +230,7 @@ public:
             buffer.resize(reserved_receive_buffer_size);
         }
     }
-    bool probe_for_one_message(MessageHandler<T, std::span<T>> auto&& on_message) {
+    bool probe_for_one_message(MessageHandler<value_type, std::span<value_type>> auto&& on_message) {
         MPI_Message message = MPI_MESSAGE_NULL;
         MPI_Status status;
         int probe_successful = 0;
@@ -238,18 +239,19 @@ public:
             return false;
         }
         auto& buffer = receive_buffers_.front();
-        MPI_Mrecv_c(buffer.data(), buffer.size(), kamping::mpi_datatype<T>(), &message, &status);
+        MPI_Mrecv_c(buffer.data(), buffer.size(), kamping::mpi_datatype<value_type>(), &message, &status);
         termination_->track_receive();
         auto envelope = internal::build_envelope(buffer, status, rank_);
         on_message(std::move(envelope));
         return true;
     }
 
-    bool probe_for_messages(MessageHandler<T, std::span<T>> auto&& on_message) {
+    bool probe_for_messages(MessageHandler<value_type, std::span<value_type>> auto&& on_message) {
         probe_for_messages(std::forward<decltype(on_message)>(on_message), receive_buffers_.size());
     }
 
-    bool probe_for_messages(MessageHandler<T, std::span<T>> auto&& on_message, std::size_t max_receives) {
+    bool probe_for_messages(MessageHandler<value_type, std::span<value_type>> auto&& on_message,
+                            std::size_t max_receives) {
         MPI_Message message = MPI_MESSAGE_NULL;
         MPI_Status status;
         int probe_successful = 1;
@@ -277,7 +279,7 @@ public:
             auto& buffer = receive_buffers_[num_recvs];
             auto& request = receive_requests_[num_recvs];
 
-            MPI_Imrecv_c(buffer.data(), buffer.size(), kamping::mpi_datatype<T>(), &message, &request);
+            MPI_Imrecv_c(buffer.data(), buffer.size(), kamping::mpi_datatype<value_type>(), &message, &request);
             num_recvs++;
             if (num_recvs == receive_buffers_.size()) {
                 receive_all();
@@ -288,7 +290,7 @@ public:
         return round == 0;  // No messages available
     }
 
-    void resize_buffers(std::size_t new_size, MessageHandler<T, std::span<T>> auto&& /*on_message*/) {
+    void resize_buffers(std::size_t new_size, MessageHandler<value_type, std::span<value_type>> auto&& /*on_message*/) {
         for (auto& buffer : receive_buffers_) {
             buffer.resize(new_size);
         }
@@ -304,9 +306,10 @@ private:
     int rank_ = 0;
 };
 
-template <MPIType T, MPIBuffer<T> ReceiveBufferContainer = std::vector<T>>
+template <MPIBuffer ReceiveBufferContainer>
 class AllocatingProbeReceiver {
 public:
+    using value_type = std::ranges::range_value_t<ReceiveBufferContainer>;
     // NOLINTBEGIN(*-easily-swappable-parameters)
     AllocatingProbeReceiver(
         MPI_Comm comm,
@@ -316,7 +319,7 @@ public:
         KASSERT(tag < kamping::mpi_env.tag_upper_bound());
         MPI_Comm_rank(comm_, &rank_);
     }
-    bool probe_for_one_message(MessageHandler<T, std::span<T>> auto&& on_message) {
+    bool probe_for_one_message(MessageHandler<value_type, std::span<value_type>> auto&& on_message) {
         MPI_Message message = MPI_MESSAGE_NULL;
         MPI_Status status;
         int probe_successful = 0;
@@ -327,9 +330,9 @@ public:
 
         ReceiveBufferContainer buffer;
         MPI_Count count = 0;
-        MPI_Get_count_c(&status, kamping::mpi_datatype<T>(), &count);
+        MPI_Get_count_c(&status, kamping::mpi_datatype<value_type>(), &count);
         buffer.resize(count);
-        MPI_Mrecv_c(buffer.data(), buffer.size(), kamping::mpi_datatype<T>(), &message, &status);
+        MPI_Mrecv_c(buffer.data(), buffer.size(), kamping::mpi_datatype<value_type>(), &message, &status);
         termination_->track_receive();
         auto envelope =
             MessageEnvelope<ReceiveBufferContainer>{std::move(buffer), status.MPI_SOURCE, rank_, status.MPI_TAG};
@@ -337,7 +340,8 @@ public:
         return true;
     }
 
-    bool probe_for_messages(MessageHandler<T, std::span<T>> auto&& on_message, std::size_t max_receives) {
+    bool probe_for_messages(MessageHandler<value_type, std::span<value_type>> auto&& on_message,
+                            std::size_t max_receives) {
         MPI_Message message = MPI_MESSAGE_NULL;
         MPI_Status status;
         int probe_successful = 1;
@@ -348,11 +352,11 @@ public:
                 continue;
             }
             MPI_Count count = 0;
-            MPI_Get_count_c(&status, kamping::mpi_datatype<T>(), &count);
+            MPI_Get_count_c(&status, kamping::mpi_datatype<value_type>(), &count);
             auto& buffer = receive_buffers_.emplace_back(count);
             auto& request = receive_requests_.emplace_back(MPI_REQUEST_NULL);
 
-            MPI_Imrecv_c(buffer.data(), buffer.size(), kamping::mpi_datatype<T>(), &message, &request);
+            MPI_Imrecv_c(buffer.data(), buffer.size(), kamping::mpi_datatype<value_type>(), &message, &request);
             round++;
         }
         if (round == 0) {

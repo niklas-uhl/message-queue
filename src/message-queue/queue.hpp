@@ -333,12 +333,13 @@ private:
             }
         }
     }
+
     MPI_Comm comm_;
     int SMALL_MESSAGE_TAG = kamping::Environment<>::tag_upper_bound() - 1;
     int LARGE_MESSAGE_TAG = kamping::Environment<>::tag_upper_bound() - 2;
     internal::TerminationCounter termination_;
-    PersistentReceiver<T, ReceiveBufferContainer> receiver_;
-    AllocatingProbeReceiver<T, ReceiveBufferContainer> large_message_receiver_;
+    PersistentReceiver<ReceiveBufferContainer> receiver_;
+    AllocatingProbeReceiver<ReceiveBufferContainer> large_message_receiver_;
     std::deque<internal::handles::SendHandle<T, MessageContainer>> outgoing_message_box_;
     std::size_t message_box_capacity_ = std::numeric_limits<size_t>::max();
     internal::RequestPool request_pool;
