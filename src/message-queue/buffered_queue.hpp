@@ -45,7 +45,6 @@ enum class FlushStrategy : std::uint8_t { local, global, random, largest };
 struct Config {
     size_t num_request_slots = DEFAULT_NUM_REQUEST_SLOTS;
     size_t max_num_send_buffers = 2 * DEFAULT_NUM_REQUEST_SLOTS;
-    ReceiveMode receive_mode = ReceiveMode::persistent;
     FlushStrategy flush_strategy = FlushStrategy::local;
     size_t global_threshold_bytes = std::numeric_limits<size_t>::max();
     std::size_t local_threshold_bytes = DEFAULT_BUFFER_THRESHOLD;
@@ -72,14 +71,14 @@ public:
                          Merger merger = Merger{},
                          Splitter splitter = Splitter{},
                          BufferCleaner cleaner = BufferCleaner{})
-        : queue_(comm, config.num_request_slots, compute_buffer_size(config), config.receive_mode),
+        : queue_(comm, config.num_request_slots, compute_buffer_size(config)),
           local_threshold_bytes_(config.local_threshold_bytes),
           global_threshold_bytes_(config.global_threshold_bytes),
           max_num_send_buffers_(config.max_num_send_buffers),
-          flush_strategy_(config.flush_strategy),
           merge(std::move(merger)),
           split(std::move(splitter)),
-          pre_send_cleanup(std::move(cleaner)) {
+          pre_send_cleanup(std::move(cleaner)),
+          flush_strategy_(config.flush_strategy) {
         reserve_send_buffers(config.num_request_slots);
     }
 
@@ -439,7 +438,6 @@ private:
             handle_overflow(it);  // customization point
             buffer = get_new_buffer();
         }
-        PEID rank = 0;
         merge(buffer, receiver, queue_.rank(), std::move(envelope));
         auto new_buffer_size = buffer.size();
         global_buffer_size_ += new_buffer_size - old_buffer_size;
@@ -603,14 +601,17 @@ private:
     MessageQueue<BufferType, BufferContainer, ReceiveBufferContainer> queue_;
     BufferMap buffers_;
     BufferList buffer_free_list_;
-    std::size_t num_send_buffers_ = 0;
+    size_t local_threshold_bytes_;
+    size_t global_threshold_bytes_;
     std::size_t max_num_send_buffers_;
+
+    std::size_t num_send_buffers_ = 0;
+
     Merger merge;
     Splitter split;
     BufferCleaner pre_send_cleanup;
     size_t global_buffer_size_ = 0;
-    size_t global_threshold_bytes_;
-    size_t local_threshold_bytes_;
+
     FlushStrategy flush_strategy_;
 };
 }  // namespace message_queue

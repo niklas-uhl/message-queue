@@ -28,15 +28,15 @@ namespace message_queue::aggregation {
 struct AppendMerger {
     template <MPIBuffer BufferContainer>
     void operator()(BufferContainer& buffer,
-                    PEID buffer_destination,
-                    PEID my_rank,
+                    PEID /* buffer_destination */,
+                    PEID /* my_rank */,
                     Envelope<std::ranges::range_value_t<BufferContainer>> auto envelope) const {
         buffer.insert(std::end(buffer), std::begin(envelope.message), std::end(envelope.message));
     }
     template <typename MessageContainer, typename BufferContainer>
     size_t estimate_new_buffer_size(BufferContainer const& buffer,
-                                    PEID buffer_destination,
-                                    PEID my_rank,
+                                    PEID /* buffer_destination */,
+                                    PEID /* my_rank */,
                                     MessageEnvelope<MessageContainer> const& envelope) const {
         return buffer.size() + envelope.message.size();
     };
@@ -98,7 +98,7 @@ static_assert(Splitter<SentinelSplitter<int>, int, std::vector<int>>);
 
 struct NoOpCleaner {
     template <typename BufferContainer>
-    void operator()(BufferContainer& buffer, PEID) const {}
+    void operator()(BufferContainer& /* buffer */, PEID) const {}
 };
 static_assert(BufferCleaner<NoOpCleaner, std::vector<int>>);
 

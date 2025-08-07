@@ -50,7 +50,7 @@ public:
         }
 
         // first check the hinted position
-        if (hint >= 0 && hint < capacity() && requests[hint] == MPI_REQUEST_NULL) {
+        if (hint >= 0 && static_cast<std::size_t>(hint) < capacity() && requests[hint] == MPI_REQUEST_NULL) {
             add_to_active_range(hint);
             return {{hint, &requests[hint]}};
         }
@@ -66,7 +66,7 @@ public:
         KASSERT(search_strategy == SearchStrategy::local);
 
         // first try to find a request in the active range if there is one
-        if (active_requests_ < active_range.second - active_range.first) {
+        if (active_requests_ < static_cast<std::size_t>(active_range.second - active_range.first)) {
             for (auto i = active_range.first; i < active_range.second; i++) {
                 if (requests[i] == MPI_REQUEST_NULL) {
                     add_to_active_range(i);
@@ -75,7 +75,7 @@ public:
             }
         }
         // search right of the active range
-        for (auto i = active_range.second; i < capacity(); i++) {
+        for (auto i = active_range.second; i < static_cast<int>(capacity()); i++) {
             if (requests[i] == MPI_REQUEST_NULL) {
                 add_to_active_range(i);
                 return {{i, &requests[i]}};
@@ -177,7 +177,7 @@ public:
                 on_complete(index);
             }
             round_robin_index++;
-            if (round_robin_index == capacity()) {
+            if (round_robin_index == static_cast<int>(capacity())) {
                 round_robin_index = 0;
             }
         }

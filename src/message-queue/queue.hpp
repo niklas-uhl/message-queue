@@ -42,8 +42,6 @@ namespace message_queue {
 
 static constexpr std::size_t DEFAULT_POLL_SKIP_THRESHOLD = 100;
 
-enum class ReceiveMode : std::uint8_t { poll, posted_receives, persistent };
-
 enum class TerminationState : std::uint8_t { active, trying_termination, terminated };
 
 template <MPIType T,
@@ -51,18 +49,16 @@ template <MPIType T,
           MPIBuffer<T> ReceiveBufferContainer = std::vector<T>>
 class MessageQueue {
 public:
-    MessageQueue(MPI_Comm comm, size_t num_request_slots, size_t reserved_receive_buffer_size, ReceiveMode receive_mode)
+    MessageQueue(MPI_Comm comm, size_t num_request_slots, size_t reserved_receive_buffer_size)
 
-        : termination_(comm),
-          SMALL_MESSAGE_TAG(0),
-          LARGE_MESSAGE_TAG(1),
+        : comm_(comm),
+          termination_(comm),
           receiver_(comm, SMALL_MESSAGE_TAG, termination_, num_request_slots, reserved_receive_buffer_size),
           large_message_receiver_(comm, LARGE_MESSAGE_TAG, termination_),
           outgoing_message_box_(),
           request_pool(num_request_slots),
           in_transit_messages_(num_request_slots),
-          reserved_receive_buffer_size_(reserved_receive_buffer_size),
-          comm_(comm) {
+          reserved_receive_buffer_size_(reserved_receive_buffer_size) {
         MPI_Comm_rank(comm_, &rank_);
         MPI_Comm_size(comm_, &size_);
 
@@ -70,27 +66,6 @@ public:
         // cast to void to silence nodiscard warning
         static_cast<void>(kamping::mpi_datatype<T>());
     }
-
-    // bool probe_for_messages(MessageHandler<T, std::span<T>> auto&& on_message) {
-    //     // probe for a single large message
-    //     bool something_happened = false;
-    //     if (allow_large_messages_) {
-    //         something_happened = probe_for_one_message(on_message, MPI_ANY_SOURCE, LARGE_MESSAGE_TAG);
-    //     }
-    //     switch (receive_mode_) {
-    //         case ReceiveMode::poll:
-    //             something_happened |= probe_for_message_probing(on_message);
-    //             break;
-    //         case ReceiveMode::posted_receives:
-    //         case ReceiveMode::persistent:
-    //             something_happened |= probe_for_messages_persistent(on_message);
-    //             break;
-    //     }
-    //     if (something_happened) {
-    //         reactivate();
-    //     }
-    //     return something_happened;
-    // }
 
     /// Post a message to the message queue
     /// Posting a message may fail if the message box is full and no send slots are available.
@@ -358,6 +333,10 @@ private:
             }
         }
     }
+    MPI_Comm comm_;
+    int SMALL_MESSAGE_TAG = kamping::Environment<>::tag_upper_bound() - 1;
+    int LARGE_MESSAGE_TAG = kamping::Environment<>::tag_upper_bound() - 2;
+    internal::TerminationCounter termination_;
     PersistentReceiver<T, ReceiveBufferContainer> receiver_;
     AllocatingProbeReceiver<T, ReceiveBufferContainer> large_message_receiver_;
     std::deque<internal::handles::SendHandle<T, MessageContainer>> outgoing_message_box_;
@@ -365,13 +344,9 @@ private:
     internal::RequestPool request_pool;
     std::vector<internal::handles::SendHandle<T, MessageContainer>> in_transit_messages_;
     size_t reserved_receive_buffer_size_;
-    internal::TerminationCounter termination_;
     size_t request_id_ = 0;
-    MPI_Comm comm_;
     PEID rank_ = 0;
     PEID size_ = 0;
-    int LARGE_MESSAGE_TAG;
-    int SMALL_MESSAGE_TAG;
     bool allow_large_messages_ = false;
     TerminationState termination_state_ = TerminationState::active;
     bool synchronous_mode_ = false;

@@ -36,8 +36,9 @@ template <typename MessageType,
 class BufferedMessageQueueBuilder {
 private:
     BufferedMessageQueueBuilder(MPI_Comm comm, Config config, Merger merger, Splitter splitter, BufferCleaner cleaner)
-        : comm_(comm),
-          config_(config),
+        : config_(config),
+          comm_(comm),
+
           merger_(std::move(merger)),
           splitter_(std::move(splitter)),
           cleaner_(std::move(cleaner)) {}
@@ -52,7 +53,7 @@ private:
     friend class BufferedMessageQueueBuilder;  // Allow chaining of builder methods
 
 public:
-    explicit BufferedMessageQueueBuilder(MPI_Comm comm, Config config = {}) : comm_(comm), config_(config) {}
+    explicit BufferedMessageQueueBuilder(MPI_Comm comm, Config config = {}) : config_(config), comm_(comm) {}
     explicit BufferedMessageQueueBuilder(Config config = {}, MPI_Comm comm = MPI_COMM_WORLD)
         : config_(config), comm_(comm) {}
 

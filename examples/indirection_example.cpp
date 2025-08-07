@@ -27,7 +27,7 @@
 
 auto main() -> int {
     MPI_Init(nullptr, nullptr);
-    auto merger = [](auto& buffer, message_queue::PEID buffer_destination, message_queue::PEID my_rank, auto envelope) {
+    auto merger = [](auto& buffer, message_queue::PEID /* buffer_destination */, message_queue::PEID my_rank, auto envelope) {
         if (!buffer.empty()) {
             buffer.push_back(-1);
         }
@@ -39,7 +39,7 @@ auto main() -> int {
         // this allows us to keep a trace of the path the message took.
         buffer.push_back(my_rank);
     };
-    auto splitter = [](auto const& buffer, message_queue::PEID buffer_origin, message_queue::PEID my_rank) {
+    auto splitter = [](auto const& buffer, message_queue::PEID /* buffer_origin */, message_queue::PEID /* my_rank */) {
         return buffer | std::ranges::views::split(-1) | std::ranges::views::transform([](auto&& chunk) {
 #ifdef MESSAGE_QUEUE_SPLIT_VIEW_IS_LAZY
                    auto size = std::ranges::distance(chunk);

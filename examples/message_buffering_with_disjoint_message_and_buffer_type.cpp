@@ -51,7 +51,7 @@ auto main(int argc, char* argv[]) -> int {
 
     CLI11_PARSE(app, argc, argv);
 
-    auto merge = [](auto& buf, message_queue::PEID buffer_destination, message_queue::PEID my_rank,
+    auto merge = [](auto& buf, message_queue::PEID /* buffer_destination */, message_queue::PEID /* my_rank */,
                     message_queue::Envelope auto msg) {
         if (!buf.empty()) {
             buf.emplace_back(-1);
@@ -87,6 +87,7 @@ auto main(int argc, char* argv[]) -> int {
                          .with_buffer_type<int>()
                          .with_merger(std::move(merge))
                          .with_splitter(std::move(split))
+                         .with_buffer_cleaner(std::move(printing_cleaner))
                          .build();
         queue.synchronous_mode();
         int rank, size;
@@ -101,7 +102,7 @@ auto main(int argc, char* argv[]) -> int {
         if (local_threshold != std::numeric_limits<size_t>::max()) {
             // queue.local_threshold(local_threshold);
         }
-        for (auto i = 0; i < number_of_messages; ++i) {
+        for (std::size_t i = 0; i < number_of_messages; ++i) {
             int destination = dist(gen);
             int message_size = message_size_dist(gen);
             auto message = ranges::views::ints(1, message_size) |

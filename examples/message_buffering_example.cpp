@@ -91,11 +91,11 @@ auto main(int argc, char* argv[]) -> int {
         if (local_threshold != std::numeric_limits<size_t>::max()) {
             // queue.local_threshold(local_threshold);
         }
-        for (auto i = 0; i < number_of_messages; ++i) {
+        for (std::size_t i = 0; i < number_of_messages; ++i) {
             int val = dist(gen);
             queue.post_message(val, val);
         }
-        auto _ = queue.terminate([&](message_queue::Envelope<int> auto envelope) {
+	std::ignore = queue.terminate([&](message_queue::Envelope<int> auto envelope) {
             std::println("Message {} from {} arrived.", envelope.message, envelope.sender);
         });
     }

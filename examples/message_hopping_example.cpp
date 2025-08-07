@@ -51,18 +51,18 @@ int main(int argc, char* argv[]) {
     for (size_t i = 0; i < iterations; i++) {
         MPI_Barrier(MPI_COMM_WORLD);
         double start = MPI_Wtime();
-        int local_max_test_size = 0;
-        size_t local_max_active_requests = 0;
 
         using MessageContainer = std::vector<int>;
 
-        auto queue = message_queue::MessageQueue<int, MessageContainer>{MPI_COMM_WORLD, 8, 100,
-                                                                        message_queue::ReceiveMode::poll};
+        auto queue = message_queue::MessageQueue<int, MessageContainer>{
+            MPI_COMM_WORLD,
+            8,
+            100,
+        };
         std::default_random_engine eng;
         eng.seed(rank);
         std::bernoulli_distribution bernoulli_dist(0.1);
         std::uniform_int_distribution<size_t> rank_dist(1, size - 1);
-        message_queue::PEID receiver = rank_dist(eng);
         MessageContainer message(message_size);
         message[0] = rank;
         message[1] = 0;
@@ -78,8 +78,7 @@ int main(int argc, char* argv[]) {
                 KASSERT(envelope.message.size() > 1);
                 std::vector msg(envelope.message.begin(), envelope.message.end());
                 msg[1]++;
-                queue.post_message(std::move(msg),
-                                   (rank + rank_dist(eng)) % size);
+                queue.post_message(std::move(msg), (rank + rank_dist(eng)) % size);
             }
         };
         queue.poll(on_message);

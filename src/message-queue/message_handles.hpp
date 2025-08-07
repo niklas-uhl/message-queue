@@ -69,8 +69,8 @@ public:
     SendHandle(MPI_Comm comm = MPI_COMM_NULL) : MessageHandle<S, MessageContainer>(), comm_(comm) {}
 
     void initiate_send() {
-        int err = MPI_Isend(std::data(*this->message_), std::size(*this->message_), kamping::mpi_datatype<S>(),
-                            receiver_, this->tag_, this->comm_, this->request_);
+        MPI_Isend(std::data(*this->message_), std::size(*this->message_), kamping::mpi_datatype<S>(), receiver_,
+                  this->tag_, this->comm_, this->request_);
     }
 
     void set_message(MessageContainer message) {
@@ -170,16 +170,16 @@ struct ProbeResult {
     }
 };
 
-static std::optional<ProbeResult> probe(MPI_Comm comm, PEID source = MPI_ANY_SOURCE, PEID tag = MPI_ANY_TAG) {
-    ProbeResult result{};
-    int message_found = 0;
-    MPI_Improbe(source, tag, comm, &message_found, &result.matched_message, &result.status);
-    if (static_cast<bool>(message_found)) {
-        result.sender = result.status.MPI_SOURCE;
-        result.tag = result.status.MPI_TAG;
-        result.comm = comm;
-        return result;
-    }
-    return std::nullopt;
-}
+// static std::optional<ProbeResult> probe(MPI_Comm comm, PEID source = MPI_ANY_SOURCE, PEID tag = MPI_ANY_TAG) {
+//     ProbeResult result{};
+//     int message_found = 0;
+//     MPI_Improbe(source, tag, comm, &message_found, &result.matched_message, &result.status);
+//     if (static_cast<bool>(message_found)) {
+//         result.sender = result.status.MPI_SOURCE;
+//         result.tag = result.status.MPI_TAG;
+//         result.comm = comm;
+//         return result;
+//     }
+//     return std::nullopt;
+// }
 }  // namespace message_queue::internal::handles

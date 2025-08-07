@@ -57,7 +57,7 @@ public:
             return true;
         }
         int reduce_finished = 0;
-        int err = MPI_Test(&reduce_req_, &reduce_finished, MPI_STATUS_IGNORE);
+        MPI_Test(&reduce_req_, &reduce_finished, MPI_STATUS_IGNORE);
         return static_cast<bool>(reduce_finished);
     }
 
