@@ -48,6 +48,7 @@ struct Config {
     FlushStrategy flush_strategy = FlushStrategy::local;
     size_t global_threshold_bytes = std::numeric_limits<size_t>::max();
     std::size_t local_threshold_bytes = DEFAULT_BUFFER_THRESHOLD;
+    std::size_t out_buffer_capacity = 0;
 };
 
 template <typename MessageType,
@@ -71,7 +72,7 @@ public:
                          Merger merger = Merger{},
                          Splitter splitter = Splitter{},
                          BufferCleaner cleaner = BufferCleaner{})
-        : queue_(comm, config.num_request_slots, compute_buffer_size(config)),
+        : queue_(comm, config.num_request_slots, compute_buffer_size(config), config.out_buffer_capacity),
           local_threshold_bytes_(config.local_threshold_bytes),
           global_threshold_bytes_(config.global_threshold_bytes),
           max_num_send_buffers_(config.max_num_send_buffers),
