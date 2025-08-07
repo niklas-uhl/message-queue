@@ -23,6 +23,7 @@ target_sources(
   BASE_DIRS
   src
 )
+add_subdirectory(src/message-queue/)
 target_link_libraries(message-queue INTERFACE MPI::MPI_CXX kassert::kassert)
 target_link_libraries(message-queue INTERFACE kamping::kamping)
   

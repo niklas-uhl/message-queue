@@ -37,7 +37,7 @@ class RequestPool {
 public:
     RequestPool(std::size_t capacity = 0) : requests(capacity, MPI_REQUEST_NULL), indices(capacity) {}
 
-    std::optional<std::pair<int, MPI_Request*>> get_some_inactive_request(
+    std::optional<std::pair<int, MPI_Request&>> get_some_inactive_request(
         int hint = -1,
         SearchStrategy search_strategy = SearchStrategy::linear) {
         if (inactive_requests() == 0) {
@@ -52,7 +52,7 @@ public:
         // first check the hinted position
         if (hint >= 0 && static_cast<std::size_t>(hint) < capacity() && requests[hint] == MPI_REQUEST_NULL) {
             add_to_active_range(hint);
-            return {{hint, &requests[hint]}};
+            return {{hint, requests[hint]}};
         }
         if (search_strategy == SearchStrategy::linear) {
             auto it = std::ranges::find(requests, MPI_REQUEST_NULL);
@@ -61,7 +61,7 @@ public:
             }
             std::size_t index = std::distance(requests.begin(), it);
             add_to_active_range(static_cast<int>(index));
-            return {{index, &*it}};
+            return {{index, *it}};
         }
         KASSERT(search_strategy == SearchStrategy::local);
 
@@ -70,7 +70,7 @@ public:
             for (auto i = active_range.first; i < active_range.second; i++) {
                 if (requests[i] == MPI_REQUEST_NULL) {
                     add_to_active_range(i);
-                    return {{i, &requests[i]}};
+                    return {{i, requests[i]}};
                 }
             }
         }
@@ -78,14 +78,14 @@ public:
         for (auto i = active_range.second; i < static_cast<int>(capacity()); i++) {
             if (requests[i] == MPI_REQUEST_NULL) {
                 add_to_active_range(i);
-                return {{i, &requests[i]}};
+                return {{i, requests[i]}};
             }
         }
         // search left of the active range starting at active_range.first
         for (auto i = active_range.first - 1; i >= 0; i--) {
             if (requests[i] == MPI_REQUEST_NULL) {
                 add_to_active_range(i);
-                return {{i, &requests[i]}};
+                return {{i, requests[i]}};
             }
         }
         // this should never happen

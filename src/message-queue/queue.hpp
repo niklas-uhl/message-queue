@@ -23,19 +23,16 @@
 #include <algorithm>
 #include <concepts>
 #include <cstddef>
-#include <deque>
 #include <kamping/environment.hpp>
 #include <kamping/mpi_datatype.hpp>
 #include <kassert/kassert.hpp>
-#include <limits>
 #include <optional>
 #include <utility>
 #include <vector>
 
 #include "./concepts.hpp"
-#include "./message_handles.hpp"
 #include "./receiver.hpp"
-#include "./request_pool.hpp"
+#include "./sender.hpp"
 #include "./termination_counter.hpp"
 
 namespace message_queue {
@@ -49,15 +46,16 @@ template <MPIType T,
           MPIBuffer<T> ReceiveBufferContainer = std::vector<T>>
 class MessageQueue {
 public:
-    MessageQueue(MPI_Comm comm, size_t num_request_slots, size_t reserved_receive_buffer_size)
+    MessageQueue(MPI_Comm comm,
+                 size_t num_request_slots,
+                 size_t reserved_receive_buffer_size,
+                 size_t out_buffer_capacity = 0)
 
         : comm_(comm),
           termination_(comm),
+          sender_(comm, num_request_slots, out_buffer_capacity),
           receiver_(comm, SMALL_MESSAGE_TAG, termination_, num_request_slots, reserved_receive_buffer_size),
           large_message_receiver_(comm, LARGE_MESSAGE_TAG, termination_),
-          outgoing_message_box_(),
-          request_pool(num_request_slots),
-          in_transit_messages_(num_request_slots),
           reserved_receive_buffer_size_(reserved_receive_buffer_size) {
         MPI_Comm_rank(comm_, &rank_);
         MPI_Comm_size(comm_, &size_);
@@ -71,11 +69,6 @@ public:
     /// Posting a message may fail if the message box is full and no send slots are available.
     /// @return an optional containing the request id if the message was successfully posted, otherwise nullopt
     auto post_message(MessageContainer&& message, PEID receiver) -> std::optional<std::size_t> {
-        // TODO check if everything works if the message is empty
-        // if (message.size() == 0) {
-        //     return std::nullopt;
-        // }
-        internal::handles::SendHandle<T, MessageContainer> handle(comm_);
         int tag = SMALL_MESSAGE_TAG;
         if (message.size() > reserved_receive_buffer_size_) {
             if (!allow_large_messages_) {
@@ -83,32 +76,10 @@ public:
             }
             tag = LARGE_MESSAGE_TAG;
         }
-        handle.set_tag(tag);
-        handle.set_message(std::move(message));
-        handle.set_receiver(receiver);
-        handle.set_request_id(this->request_id_);
-
-        if (outgoing_message_box_.empty() && empty_send_slots() > 0) {
-            // we can try to send directly
-            auto returned_handle = try_send_something(-1, std::move(handle));
-            KASSERT(!returned_handle.has_value(),
-                    "This should always succeed since we checked for an empty slot before.");
-            auto receipt = std::optional{this->request_id_};
-            this->request_id_++;
+        std::optional<std::size_t> receipt = sender_.enqueue_for_sending(std::move(message), receiver, tag);
+        if (receipt.has_value()) {
             termination_.track_send();
-            return receipt;
         }
-        // try appending to the message box
-        try_send_something_from_message_box();  // ensure that we don't "waste" an empty slot
-        if (outgoing_message_box_.size() >= message_box_capacity_) {
-            // the message box is full
-            return std::nullopt;
-        }
-        outgoing_message_box_.emplace_back(std::move(handle));
-        auto receipt = std::optional{this->request_id_};
-        this->request_id_++;
-        try_send_something_from_message_box();
-        termination_.track_send();
         return receipt;
     }
 
@@ -136,7 +107,7 @@ public:
             reactivate();
         }
         bool send_finished_something =
-            progress_sending(std::forward<decltype(on_finished_sending)>(on_finished_sending));
+            sender_.progress_sending(std::forward<decltype(on_finished_sending)>(on_finished_sending));
         if (send_finished_something || received_something) {
             return std::pair{send_finished_something, received_something};
         }
@@ -229,22 +200,6 @@ public:
         allow_large_messages_ = allow;
     }
 
-    bool progress_sending(SendFinishedCallback<MessageContainer> auto on_finished_sending) {
-        constexpr bool move_back_message = std::invocable<decltype(on_finished_sending), std::size_t, MessageContainer>;
-        // check for finished sends and try starting new ones
-        return request_pool.test_any([&](int completed_request_index) {
-            std::size_t request_id = in_transit_messages_[completed_request_index].get_request_id();
-            auto message = in_transit_messages_[completed_request_index].extract_message();
-            in_transit_messages_[completed_request_index].emplace({comm_});
-            if constexpr (move_back_message) {
-                on_finished_sending(request_id, std::move(message));
-            } else {
-                on_finished_sending(request_id);
-            }
-            try_send_something_from_message_box(completed_request_index);
-        });
-    }
-
     [[nodiscard]] PEID rank() const {
         return rank_;
     }
@@ -257,11 +212,8 @@ public:
         return comm_;
     }
 
-    [[nodiscard]] std::size_t total_remaining_capacity() const {
-        if (remaining_message_box_capacity() == std::numeric_limits<std::size_t>::max()) {
-            return std::numeric_limits<std::size_t>::max();
-        }
-        return empty_send_slots() + remaining_message_box_capacity();
+    [[nodiscard]] bool has_send_capacity() const {
+        return sender_.has_capacity();
     }
 
     [[nodiscard]] TerminationState termination_state() const {
@@ -269,63 +221,11 @@ public:
     }
 
 private:
-    bool try_send_something_from_message_box(int hint = -1) {
-        if (outgoing_message_box_.empty()) {
-            return false;
-        }
-        internal::handles::SendHandle<T, MessageContainer>& message_to_send = outgoing_message_box_.front();
-        if (auto returned_handle = try_send_something(hint, std::move(message_to_send))) {
-            message_to_send = std::move(*returned_handle);
-            return false;
-        }
-        outgoing_message_box_.pop_front();
-        return true;
-    }
-
-    auto try_send_something(int hint, internal::handles::SendHandle<T, MessageContainer>&& message_to_send)
-        -> std::optional<internal::handles::SendHandle<T, MessageContainer>> {
-        if (auto result = request_pool.get_some_inactive_request(hint)) {
-            // internal::handles::SendHandle<T, MessageContainer> message_to_send =
-            //     std::move(outgoing_message_box.front());
-
-            auto [index, req_ptr] = *result;
-            message_to_send.set_request(req_ptr);
-            KASSERT(!in_transit_messages_[index].message().has_value());
-            in_transit_messages_[index].swap(message_to_send);
-            in_transit_messages_[index].initiate_send();
-            return std::nullopt;
-        }
-        return std::move(message_to_send);
-    }
-
-    [[nodiscard]] size_t message_box_capacity() const {
-        return message_box_capacity_;
-    }
-
-    void message_box_capacity(size_t capacity) {
-        message_box_capacity_ = capacity;
-    }
-
-    [[nodiscard]] std::size_t empty_send_slots() const {
-        return request_pool.inactive_requests();
-    }
-
-    [[nodiscard]] std::size_t used_send_slots() const {
-        return request_pool.active_requests();
-    }
-
-    [[nodiscard]] std::size_t remaining_message_box_capacity() const {
-        if (message_box_capacity_ == std::numeric_limits<std::size_t>::max()) {
-            return std::numeric_limits<std::size_t>::max();
-        }
-        return message_box_capacity_ - outgoing_message_box_.size();
-    }
-
     void poll_until_message_box_empty(
         MessageHandler<T, MessageContainer> auto&& on_message,
         SendFinishedCallback<MessageContainer> auto&& on_finished_sending,
         std::predicate<> auto&& should_stop_polling = [] { return false; }) {
-        while (!outgoing_message_box_.empty()) {
+        while (sender_.pending_messages() > 0) {
             poll(std::forward<decltype(on_message)>(on_message),
                  std::forward<decltype(on_finished_sending)>(on_finished_sending));
             if (should_stop_polling()) {
@@ -338,14 +238,10 @@ private:
     int SMALL_MESSAGE_TAG = kamping::Environment<>::tag_upper_bound() - 1;
     int LARGE_MESSAGE_TAG = kamping::Environment<>::tag_upper_bound() - 2;
     internal::TerminationCounter termination_;
+    Sender<MessageContainer> sender_;
     PersistentReceiver<ReceiveBufferContainer> receiver_;
     AllocatingProbeReceiver<ReceiveBufferContainer> large_message_receiver_;
-    std::deque<internal::handles::SendHandle<T, MessageContainer>> outgoing_message_box_;
-    std::size_t message_box_capacity_ = std::numeric_limits<size_t>::max();
-    internal::RequestPool request_pool;
-    std::vector<internal::handles::SendHandle<T, MessageContainer>> in_transit_messages_;
     size_t reserved_receive_buffer_size_;
-    size_t request_id_ = 0;
     PEID rank_ = 0;
     PEID size_ = 0;
     bool allow_large_messages_ = false;

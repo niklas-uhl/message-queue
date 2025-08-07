@@ -483,7 +483,7 @@ private:
             }
             return ++buffer_it;
         }
-        if (queue_.total_remaining_capacity() == 0) {
+        if (!queue_.has_send_capacity()) {
             return buffer_it;
         }
         auto receipt = queue_.post_message(std::move(buffer_it->second), receiver);

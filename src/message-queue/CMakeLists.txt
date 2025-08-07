@@ -2,6 +2,7 @@ target_sources(
   message-queue
   INTERFACE
   FILE_SET HEADERS
+  FILES
   aggregators.hpp
   buffered_queue.hpp
   queue_builder.hpp
@@ -10,9 +11,9 @@ target_sources(
   indirection.hpp
   queue.hpp
   request_pool.hpp
-  message_handles.hpp
   termination_counter.hpp
   fixed_size_buffer.hpp
   grid_indirection.hpp
   receiver.hpp
+  sender.hpp
 )
